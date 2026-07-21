@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>DNX3 — Wave Tracker</title>
+<style>
+:root{--green:#1a7f3c;--green-bg:#d4edda;--green-border:#82c99a;--red:#b91c1c;--red-bg:#fde8e8;--red-border:#f5a3a3;--yellow:#b45309;--yellow-bg:#fef9c3;--yellow-border:#fde047;--blue:#2563eb;--blue-bg:#eff6ff;--blue-border:#bfdbfe;--bg:#f3f4f6;--surface:#fff;--surface2:#f9fafb;--border:#e5e7eb;--text:#111827;--subtext:#6b7280;--header-bg:#1e2d3d;--sidebar-w:260px;}
+.dark{--bg:#0f172a;--surface:#1e293b;--surface2:#273549;--border:#334155;--text:#f1f5f9;--subtext:#94a3b8;--header-bg:#0a1628;--green-bg:#052e16;--green-border:#166534;--red-bg:#450a0a;--red-border:#7f1d1d;--yellow-bg:#1c1400;--yellow-border:#854d0e;--blue-bg:#1e3a5f;--blue-border:#1d4ed8;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column;height:100vh;overflow:hidden;transition:background .2s,color .2s;}
+/* LOGIN */
+#login-screen{position:fixed;inset:0;background:var(--header-bg);display:flex;align-items:center;justify-content:center;z-index:1000;}
+.login-box{background:#fff;border-radius:14px;padding:36px 40px;width:340px;box-shadow:0 20px 60px rgba(0,0,0,.4);}
+.login-logo{font-size:1.4rem;font-weight:800;color:#1e2d3d;margin-bottom:4px;}
+.login-sub{font-size:.78rem;color:#6b7280;margin-bottom:28px;}
+.login-label{font-size:.75rem;font-weight:600;color:#374151;margin-bottom:5px;display:block;}
+.login-input{width:100%;padding:10px 12px;border:1.5px solid #e5e7eb;border-radius:8px;font-size:.88rem;outline:none;margin-bottom:16px;}
+.login-input:focus{border-color:#3b82f6;}
+.login-btn{width:100%;padding:10px;background:#1e2d3d;color:#fff;border:none;border-radius:8px;font-size:.88rem;font-weight:600;cursor:pointer;}
+.login-btn:hover{background:#2d3f54;}
+.login-error{font-size:.75rem;color:#b91c1c;margin-top:10px;min-height:18px;text-align:center;}
+.login-role{display:inline-block;margin-top:12px;font-size:.7rem;padding:2px 10px;border-radius:999px;font-weight:700;}
+.role-associate{background:#eff6ff;color:#1d4ed8;}
+.role-manager{background:#fef9c3;color:#b45309;}
+/* HEADER */
+header{background:var(--header-bg);color:#fff;height:56px;display:flex;align-items:center;padding:0 16px;gap:10px;flex-shrink:0;box-shadow:0 2px 8px rgba(0,0,0,.35);}
+.logo{font-size:.97rem;font-weight:700;}.subtitle{font-size:.68rem;opacity:.55;margin-top:1px;}
+.hright{margin-left:auto;display:flex;align-items:center;gap:8px;}
+.tab-btn{padding:5px 12px;border-radius:6px;border:1.5px solid rgba(255,255,255,.2);background:transparent;color:#fff;cursor:pointer;font-size:.76rem;font-weight:600;transition:background .15s;}
+.tab-btn.active,.tab-btn:hover{background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.45);}
+.icon-btn{background:none;border:1.5px solid rgba(255,255,255,.2);color:#fff;border-radius:6px;padding:5px 9px;cursor:pointer;font-size:.8rem;}
+.icon-btn:hover{background:rgba(255,255,255,.1);}
+.clock{font-size:.8rem;font-family:monospace;opacity:.75;min-width:66px;text-align:right;}
+.role-badge{font-size:.65rem;padding:2px 8px;border-radius:999px;font-weight:700;}
+.rb-associate{background:#1d4ed8;color:#fff;}
+.rb-manager{background:#d97706;color:#fff;}
+/* LAYOUT */
+.layout{display:flex;flex:1;overflow:hidden;}
+/* SIDEBAR */
+aside{width:var(--sidebar-w);background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;}
+.sidebar-search{padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0;position:relative;}
+.sidebar-search input{width:100%;padding:6px 10px 6px 28px;border:1.5px solid var(--border);border-radius:7px;font-size:.8rem;background:var(--surface2);color:var(--text);outline:none;}
+.sidebar-search input:focus{border-color:#3b82f6;}
+.sidebar-search .si{position:absolute;left:20px;top:50%;transform:translateY(-50%);color:var(--subtext);font-size:.75rem;pointer-events:none;}
+.stitle{font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--subtext);padding:10px 12px 5px;}
+.missing-scroll{flex:1;overflow-y:auto;}
+.mwhdr{display:flex;align-items:center;justify-content:space-between;padding:7px 12px;cursor:pointer;background:none;border:none;width:100%;color:var(--text);}
+.mwhdr:hover{background:var(--surface2);}
+.mwlabel{font-size:.7rem;font-weight:700;color:var(--subtext);text-transform:uppercase;letter-spacing:.4px;}
+.mwcount{font-size:.63rem;background:var(--surface2);border:1px solid var(--border);border-radius:999px;padding:1px 6px;color:var(--subtext);}
+.chevron{font-size:.58rem;color:var(--subtext);transition:transform .2s;}
+.mwhdr.open .chevron{transform:rotate(90deg);}
+.mwbody{padding:0 12px 6px;display:none;}
+.mwbody.open{display:block;}
+.mr{font-size:.72rem;padding:3px 0;color:var(--text);display:flex;align-items:center;gap:5px;}
+.mrdot{width:5px;height:5px;border-radius:50%;background:#f97316;flex-shrink:0;}
+.mrdsp{color:var(--subtext);font-size:.65rem;font-weight:600;}
+.nomiss{font-size:.7rem;color:var(--subtext);padding:8px 12px;}
+/* SYNC indicator */
+.sync-dot{width:7px;height:7px;border-radius:50%;background:#22c55e;display:inline-block;margin-right:4px;}
+.sync-dot.off{background:#ef4444;}
+.sync-status{font-size:.65rem;color:rgba(255,255,255,.6);display:flex;align-items:center;gap:3px;}
+</style>
+</head>
+<body>
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">🚚 DNX3</div>
+    <div class="login-sub">Container Wave Tracker · CYCLE 1</div>
+    <label class="login-label">Password</label>
+    <input class="login-input" id="pw-input" type="password" placeholder="Enter your password" onkeydown="if(event.key==='Enter')doLogin()"/>
+    <button class="login-btn" onclick="doLogin()">Sign In</button>
+    <div class="login-error" id="login-err"></div>
+  </div>
+</div>
+<!-- HEADER -->
+<header id="main-header" style="display:none">
+  <div><div class="logo">🚚 DNX3 — Container Wave Tracker</div><div class="subtitle">CYCLE 1 · Tap to check in · 👕 uniform audit</div></div>
+  <div class="hright">
+    <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-lbl">Connecting...</span></div>
+    <span class="role-badge" id="role-badge"></span>
+    <button class="tab-btn active" id="tb-t" onclick="switchTab('t')">📡 Live Tracker</button>
+    <button class="tab-btn" id="tb-r" onclick="switchTab('r')" style="display:none">📋 Report</button>
+    <button class="tab-btn" id="tb-i" onclick="switchTab('i')" style="display:none">📥 Import</button>
+    <button class="icon-btn" onclick="toggleDark()" id="dark-btn">🌙</button>
+    <button class="icon-btn" onclick="doLogout()" title="Sign out">⏏</button>
+    <div class="clock" id="clock">--:--:--</div>
+  </div>
+</header>
+<!-- TRACKER TAB -->
+<div id="tv" style="display:none;flex-direction:column;flex:1;overflow:hidden;">
+  <div class="layout">
+    <aside>
+      <div class="sidebar-search"><span class="si">🔍</span><input id="si" type="text" placeholder="Search all routes..." oninput="onSearch()"/></div>
+      <div class="stitle">Missing Routes</div>
+      <div class="missing-scroll" id="ml"></div>
+    </aside>
+    <main id="mc" style="flex:1;overflow-y:auto;padding:16px;"></main>
+  </div>
+</div>
+<!-- REPORT TAB (manager only) -->
+<div id="rv" style="display:none;flex:1;overflow-y:auto;padding:22px;"></div>
+<!-- IMPORT TAB (manager only) -->
+<div id="iv" style="display:none;flex:1;overflow-y:auto;padding:22px;"></div>
+<div id="toast" style="position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(100px);background:#1e2d3d;color:#fff;padding:8px 16px;border-radius:8px;font-size:.78rem;transition:transform .3s;z-index:999;pointer-events:none;"></div>
+<script src="/data.js"></script>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
