@@ -327,7 +327,7 @@ async function saveNote(){
   const cb=document.getElementById('note-otd');
   if(!ta)return;
   const text=ta.value.trim();
-  const otd=cb?cb.checked:false;
+  const otd=cb?cb.checked:(notes[notePanel.route]?.otd||false);
   if(text||otd){
     notes[notePanel.route]={text,otd};
   } else {
