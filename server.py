@@ -21,9 +21,11 @@ from flask import Flask, request, jsonify, send_from_directory, abort
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 
-# —— Config ——————————————————————————————————————————————————————————————
+# — Config ————————————————————————————————————————————————————————
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE   = os.path.join(BASE_DIR, 'state.json')
+NOTES_FILE   = os.path.join(BASE_DIR, 'notes.json')
+SCANLOG_FILE = os.path.join(BASE_DIR, 'scanlog.json')
 DATA_JS_FILE = os.path.join(BASE_DIR, 'data.js')
 PORT         = int(os.environ.get('PORT', 8080))
 
@@ -45,7 +47,7 @@ app = Flask(__name__, static_folder=BASE_DIR, static_url_path='')
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
-# —— State helpers ———————————————————————————————————————————————————————
+# — State helpers ———————————————————————————————————————————————
 
 def load_state():
     if os.path.isfile(STATE_FILE):
@@ -60,7 +62,33 @@ def save_state(state):
     with open(STATE_FILE, 'w', encoding='utf-8') as f:
         json.dump(state, f, indent=2)
 
-# —— Auth helpers ————————————————————————————————————————————————————————
+def load_notes():
+    if os.path.isfile(NOTES_FILE):
+        try:
+            with open(NOTES_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_notes(notes):
+    with open(NOTES_FILE, 'w', encoding='utf-8') as f:
+        json.dump(notes, f, indent=2)
+
+def load_scanlog():
+    if os.path.isfile(SCANLOG_FILE):
+        try:
+            with open(SCANLOG_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+def save_scanlog(scanlog):
+    with open(SCANLOG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(scanlog, f, indent=2)
+
+# — Auth helpers ————————————————————————————————————————————————
 
 def make_token():
     return secrets.token_hex(32)
@@ -86,7 +114,7 @@ def require_role(min_role='associate'):
         return None, (jsonify({'error': 'Manager access required'}), 403)
     return role, None
 
-# —— Static files ————————————————————————————————————————————————————————
+# — Static files ————————————————————————————————————————————————
 
 @app.route('/')
 def index():
@@ -104,7 +132,7 @@ def appjs():
 def ping():
     return jsonify({'ok': True, 'time': datetime.utcnow().isoformat()})
 
-# —— Auth endpoints ——————————————————————————————————————————————————————
+# — Auth endpoints ——————————————————————————————————————————————
 
 @app.route('/api/login', methods=['POST'])
 def login():
@@ -132,7 +160,7 @@ def me():
         return jsonify({'error': 'Unauthorised'}), 401
     return jsonify({'role': role})
 
-# —— State endpoints —————————————————————————————————————————————————————
+# — State endpoints —————————————————————————————————————————————
 
 @app.route('/api/state')
 def get_state():
@@ -206,7 +234,71 @@ def reset_all():
     socketio.emit('full_reset', {})
     return jsonify({'ok': True})
 
-# —— Import endpoint (manager only) ————————————————————————————————————
+# — Notes endpoints ——————————————————————————————————————————————
+
+@app.route('/api/notes', methods=['GET'])
+def get_notes():
+    _, err = require_role('associate')
+    if err: return err
+    return jsonify(load_notes())
+
+@app.route('/api/notes', methods=['POST'])
+def save_note():
+    _, err = require_role('associate')
+    if err: return err
+    body  = request.get_json(silent=True) or {}
+    route = body.get('route', '')
+    text  = body.get('text', '')
+    if not route:
+        return jsonify({'error': 'Missing route'}), 400
+    notes = load_notes()
+    if text:
+        notes[route] = text
+    else:
+        notes.pop(route, None)
+    save_notes(notes)
+    socketio.emit('notes_update', {'route': route, 'text': text})
+    return jsonify({'ok': True})
+
+# — ScanLog endpoints (manager only) —————————————————————————————
+
+@app.route('/api/scanlog', methods=['GET'])
+def get_scanlog():
+    _, err = require_role('associate')
+    if err: return err
+    return jsonify(load_scanlog())
+
+@app.route('/api/scanlog', methods=['POST'])
+def add_scanlog():
+    role, err = require_role('manager')
+    if err: return err
+    body  = request.get_json(silent=True) or {}
+    route = body.get('route', '').strip()
+    if not route:
+        return jsonify({'error': 'Missing route'}), 400
+    scanlog = load_scanlog()
+    if route not in scanlog:
+        scanlog.append(route)
+    save_scanlog(scanlog)
+    socketio.emit('scanlog_update', {'scanlog': scanlog})
+    return jsonify({'ok': True})
+
+@app.route('/api/scanlog', methods=['DELETE'])
+def remove_scanlog():
+    role, err = require_role('manager')
+    if err: return err
+    body  = request.get_json(silent=True) or {}
+    route = body.get('route', '').strip()
+    if not route:
+        return jsonify({'error': 'Missing route'}), 400
+    scanlog = load_scanlog()
+    if route in scanlog:
+        scanlog.remove(route)
+    save_scanlog(scanlog)
+    socketio.emit('scanlog_update', {'scanlog': scanlog})
+    return jsonify({'ok': True})
+
+# — Import endpoint (manager only) ————————————————————————————————
 
 @app.route('/api/import_data', methods=['POST'])
 def import_data():
@@ -230,13 +322,13 @@ def import_data():
     socketio.emit('data_reloaded', {})
     return jsonify({'ok': True})
 
-# —— SocketIO ———————————————————————————————————————————————————————————
+# — SocketIO —————————————————————————————————————————————————————
 
 @socketio.on('connect')
 def on_connect():
     pass
 
-# —— Main ——————————————————————————————————————————————————————————————
+# — Main ——————————————————————————————————————————————————————————
 
 if __name__ == '__main__':
     import socket as _s

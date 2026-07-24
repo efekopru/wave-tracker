@@ -8,11 +8,14 @@ let ROLE  = localStorage.getItem('dnx3_role')  || '';
 
 // ── App state ─────────────────────────────────────────────────────────────────
 let state       = {};   // waveIdx -> { route -> { time, uniform } }
+let notes       = {};   // route -> text
+let scanlog     = [];   // array of route strings
 let waveOpen    = {};
 let missingOpen = {};
 let searchQ     = '';
 let dark        = localStorage.getItem('dnx3_dk') === '1';
 let socket      = null;
+let notePanel   = {open:false, route:''};
 
 if (dark) document.body.classList.add('dark');
 
@@ -24,6 +27,10 @@ function inCount(wi)      { return Object.keys(state[String(wi)] || {}).length; 
 function uniCount(wi)     { return Object.values(state[String(wi)] || {}).filter(v=>v.uniform).length; }
 function allR(w)          { return [...(w.green||[]), ...(w.red||[])]; }
 function sortByDsp(arr)   { return [...arr].sort((a,b)=>a.dsp.localeCompare(b.dsp)||a.route.localeCompare(b.route,undefined,{numeric:true})); }
+
+// ScanLog helper: get effective green/red arrays for a wave considering scanlog overrides
+function effGreen(w){ return w.green.filter(r=>!scanlog.includes(r.route)); }
+function effRed(w){ return [...w.red, ...w.green.filter(r=>scanlog.includes(r.route))]; }
 
 function wMin(s) {
   const m=String(s).match(/(\d+):(\d+)\s*(AM|PM)/i);
@@ -112,9 +119,18 @@ async function bootApp(){
 
   // Load state from server
   await fetchState();
+  await fetchNotes();
+  await fetchScanlog();
 
   // Connect WebSocket
   connectSocket();
+
+  // Inject note panel container
+  if(!document.getElementById('note-panel')){
+    const np=document.createElement('div');
+    np.id='note-panel';np.className='note-panel';
+    document.body.appendChild(np);
+  }
 
   render();
 }
@@ -130,6 +146,20 @@ async function fetchState(){
   try{
     const r=await fetch('/api/state',{headers:{'X-Token':TOKEN}});
     if(r.ok){ state=await r.json(); }
+  }catch(e){}
+}
+
+async function fetchNotes(){
+  try{
+    const r=await fetch('/api/notes',{headers:{'X-Token':TOKEN}});
+    if(r.ok){ notes=await r.json(); }
+  }catch(e){}
+}
+
+async function fetchScanlog(){
+  try{
+    const r=await fetch('/api/scanlog',{headers:{'X-Token':TOKEN}});
+    if(r.ok){ scanlog=await r.json(); }
   }catch(e){}
 }
 
@@ -151,6 +181,27 @@ async function apiResetWave(wi){
   try{
     await fetch('/api/reset_wave',{method:'POST',headers:{'Content-Type':'application/json','X-Token':TOKEN},
       body:JSON.stringify({waveIdx:wi})});
+  }catch(e){showToast('⚠️ Sync error');}
+}
+
+async function apiSaveNote(route,text){
+  try{
+    await fetch('/api/notes',{method:'POST',headers:{'Content-Type':'application/json','X-Token':TOKEN},
+      body:JSON.stringify({route,text})});
+  }catch(e){showToast('⚠️ Sync error');}
+}
+
+async function apiAddScanlog(route){
+  try{
+    await fetch('/api/scanlog',{method:'POST',headers:{'Content-Type':'application/json','X-Token':TOKEN},
+      body:JSON.stringify({route})});
+  }catch(e){showToast('⚠️ Sync error');}
+}
+
+async function apiRemoveScanlog(route){
+  try{
+    await fetch('/api/scanlog',{method:'DELETE',headers:{'Content-Type':'application/json','X-Token':TOKEN},
+      body:JSON.stringify({route})});
   }catch(e){showToast('⚠️ Sync error');}
 }
 
@@ -193,13 +244,28 @@ function connectSocket(){
     showToast('📥 New sequencing data loaded — reloading...');
     setTimeout(()=>location.reload(),1500);
   });
+
+  socket.on('notes_update',d=>{
+    if(d.text) notes[d.route]=d.text;
+    else delete notes[d.route];
+    // If note panel is open for this route, update textarea
+    if(notePanel.open && notePanel.route===d.route){
+      const ta=document.getElementById('note-ta');
+      if(ta) ta.value=d.text||'';
+    }
+  });
+
+  socket.on('scanlog_update',d=>{
+    scanlog=d.scanlog||[];
+    render();
+  });
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────
 function onSearch(){ searchQ=document.getElementById('si').value.trim().toLowerCase(); renderMain(); }
 document.addEventListener('keydown',e=>{
   if(e.key==='/'&&document.activeElement!==document.getElementById('si')){e.preventDefault();document.getElementById('si').focus();}
-  if(e.key==='Escape'){document.getElementById('si').value='';searchQ='';renderMain();}
+  if(e.key==='Escape'){document.getElementById('si').value='';searchQ='';renderMain();closeNotePanel();}
 });
 
 // ── Tab switch ────────────────────────────────────────────────────────────────
@@ -212,12 +278,36 @@ function switchTab(t){
   if(t==='i')renderImport();
 }
 
+// ── Note Panel ────────────────────────────────────────────────────────────────
+function openNotePanel(route){
+  notePanel={open:true,route};
+  const panel=document.getElementById('note-panel');
+  panel.innerHTML=`<div class="np-header"><span class="np-title">📝 ${route}</span><button class="np-close" onclick="closeNotePanel()">✕</button></div>
+    <textarea id="note-ta" class="np-textarea" placeholder="Add notes for ${route}...">${notes[route]||''}</textarea>
+    <div class="np-actions"><button class="rabtn pri" onclick="saveNote()">💾 Save</button><button class="rabtn" onclick="closeNotePanel()">Close</button></div>`;
+  panel.classList.add('open');
+}
+function closeNotePanel(){
+  notePanel={open:false,route:''};
+  const panel=document.getElementById('note-panel');
+  if(panel){panel.classList.remove('open');panel.innerHTML='';}
+}
+async function saveNote(){
+  const ta=document.getElementById('note-ta');
+  if(!ta)return;
+  const text=ta.value.trim();
+  notes[notePanel.route]=text;
+  await apiSaveNote(notePanel.route,text);
+  showToast(`📝 Note saved for ${notePanel.route}`);
+}
+
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function renderSidebar(){
   const ml=document.getElementById('ml');
   ml.innerHTML=''; let any=false;
   WAVES.forEach((w,i)=>{
-    const miss=sortByDsp(allR(w).filter(r=>!isIn(i,r.route)));
+    const green=effGreen(w),red=effRed(w);
+    const miss=sortByDsp([...green,...red].filter(r=>!isIn(i,r.route)));
     if(!miss.length)return; any=true;
     const open=!!missingOpen[i];
     const d=document.createElement('div');
@@ -279,17 +369,47 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .cr{font-weight:700;font-size:.82rem;}.cs{font-size:.65rem;color:var(--subtext);margin-top:1px;}
 .cd{font-size:.63rem;color:var(--subtext);margin-top:1px;}.ct{font-size:.63rem;color:#3b82f6;margin-top:2px;font-weight:600;}
 .dark .ct{color:#60a5fa;}
-.urow{margin-top:6px;border-top:1px solid rgba(0,0,0,.08);padding-top:5px;}
+.urow{margin-top:6px;border-top:1px solid rgba(0,0,0,.08);padding-top:5px;display:flex;align-items:center;gap:4px;}
 .dark .urow{border-top-color:rgba(255,255,255,.08);}
 .ubtn{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:5px;border:1px solid rgba(0,0,0,.15);background:rgba(255,255,255,.5);cursor:pointer;font-size:.63rem;font-weight:600;color:#374151;transition:background .15s;white-space:nowrap;}
 .dark .ubtn{background:rgba(255,255,255,.08);color:#cbd5e1;border-color:rgba(255,255,255,.1);}
 .ubtn:hover{background:rgba(255,255,255,.8);}
 .ubtn.on{background:#dcfce7;border-color:#86efac;color:#166534;}
 .dark .ubtn.on{background:#052e16;border-color:#166534;color:#86efac;}
+.pen-btn{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:5px;border:1px solid rgba(0,0,0,.15);background:rgba(255,255,255,.5);cursor:pointer;font-size:.7rem;transition:background .15s;margin-left:auto;}
+.dark .pen-btn{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.1);}
+.pen-btn:hover{background:rgba(255,255,255,.8);}
+.pen-btn.has-note{background:#fef3c7;border-color:#f59e0b;}
+.dark .pen-btn.has-note{background:#451a03;border-color:#f59e0b;}
 .sw-lbl{font-size:.7rem;font-weight:700;color:var(--subtext);text-transform:uppercase;letter-spacing:.6px;padding:6px 0 4px;border-top:1px solid var(--border);margin-top:4px;}
 .sw-lbl:first-child{border-top:none;margin-top:0;}
 .srwrap{padding:14px;}.srwrap .rgrid{margin-bottom:6px;}
 .no-results{text-align:center;color:var(--subtext);padding:30px;font-size:.85rem;}
+/* Note Panel */
+.note-panel{position:fixed;top:0;right:-360px;width:340px;height:100vh;background:var(--surface);border-left:1px solid var(--border);box-shadow:-4px 0 20px rgba(0,0,0,.15);z-index:1000;display:flex;flex-direction:column;transition:right .25s ease;}
+.note-panel.open{right:0;}
+.np-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);}
+.np-title{font-weight:700;font-size:.9rem;}
+.np-close{border:none;background:none;font-size:1.1rem;cursor:pointer;color:var(--text);padding:4px 8px;border-radius:4px;}
+.np-close:hover{background:var(--surface2);}
+.np-textarea{flex:1;margin:14px 16px;padding:12px;border:1px solid var(--border);border-radius:8px;resize:none;font-size:.82rem;font-family:inherit;background:var(--bg);color:var(--text);outline:none;}
+.np-textarea:focus{border-color:#3b82f6;}
+.np-actions{display:flex;gap:9px;padding:12px 16px;border-top:1px solid var(--border);}
+/* ScanLog */
+.scanlog-sec{margin-top:24px;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+.scanlog-title{font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--subtext);padding:10px 14px 8px;border-bottom:1px solid var(--border);}
+.scanlog-body{padding:12px 14px;}
+.scanlog-input-row{display:flex;gap:8px;margin-bottom:10px;}
+.scanlog-input{flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:7px;font-size:.8rem;background:var(--bg);color:var(--text);outline:none;}
+.scanlog-input:focus{border-color:#3b82f6;}
+.scanlog-add{padding:7px 14px;border-radius:7px;border:1.5px solid #3b82f6;background:#3b82f6;color:#fff;font-size:.76rem;font-weight:600;cursor:pointer;}
+.scanlog-add:hover{background:#2563eb;}
+.scanlog-list{list-style:none;padding:0;margin:0;}
+.scanlog-item{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-bottom:1px solid var(--border);font-size:.78rem;font-weight:600;}
+.scanlog-item:last-child{border-bottom:none;}
+.scanlog-rm{border:none;background:none;color:#dc2626;cursor:pointer;font-size:1rem;padding:0 4px;font-weight:700;}
+.scanlog-rm:hover{color:#991b1b;}
+.scanlog-empty{color:var(--subtext);font-size:.78rem;padding:4px 0;}
 /* Report */
 .rpt-title{font-size:1.25rem;font-weight:700;margin-bottom:2px;}
 .rpt-sub{font-size:.76rem;color:var(--subtext);margin-bottom:16px;}
@@ -344,12 +464,13 @@ function cardHtml(wi,r,color){
   const chk=isIn(wi,r.route),uni=hasUniform(wi,r.route),t=inTime(wi,r.route);
   const late=isLate(wi)&&!chk, eff=late?'late':color;
   const q=searchQ;
-  const match=!q||r.route.toLowerCase().includes(q)||r.dsp.toLowerCase().includes(q)||r.staging.toLowerCase().includes(q);
+  const match=!q||r.route.toLowerCase()===q||r.dsp.toLowerCase()===q||r.staging.toLowerCase()===q;
+  const hasNote=!!notes[r.route];
   return`<div class="rcard ${eff}${chk?' checked':''}${q&&!match?' dimmed':''}" data-wi="${wi}" data-r="${r.route}">
     <div class="ck">✓</div>
     <div class="cr">${r.route}</div><div class="cs">${r.staging}</div><div class="cd">${r.dsp}</div>
     ${t?`<div class="ct">${t}</div>`:''}
-    <div class="urow"><button class="ubtn${uni?' on':''}" data-wi="${wi}" data-r="${r.route}" data-action="u" onclick="event.stopPropagation()"><span>👕</span>${uni?' Uniform ✓':' Uniform'}</button></div>
+    <div class="urow"><button class="ubtn${uni?' on':''}" data-wi="${wi}" data-r="${r.route}" data-action="u" onclick="event.stopPropagation()"><span>👕</span>${uni?' Uniform ✓':' Uniform'}</button><button class="pen-btn${hasNote?' has-note':''}" data-r="${r.route}" data-action="note" onclick="event.stopPropagation()">✏️</button></div>
   </div>`;
 }
 
@@ -358,6 +479,7 @@ function bindCards(c){
   c.querySelectorAll('.rcard:not(.dimmed)').forEach(card=>{
     card.addEventListener('click',async e=>{
       if(e.target.closest('[data-action="u"]'))return;
+      if(e.target.closest('[data-action="note"]'))return;
       const wi=+card.dataset.wi, ro=card.dataset.r;
       if(isIn(wi,ro)){
         delete state[String(wi)][ro];
@@ -391,6 +513,12 @@ function bindCards(c){
       render();
     });
   });
+  c.querySelectorAll('[data-action="note"]').forEach(btn=>{
+    btn.addEventListener('click',e=>{
+      e.stopPropagation();
+      openNotePanel(btn.dataset.r);
+    });
+  });
 }
 
 // ── Main render ───────────────────────────────────────────────────────────────
@@ -399,16 +527,18 @@ function renderMain(){
   if(searchQ){
     let html='<div class="srwrap">'; let found=0;
     WAVES.forEach((w,i)=>{
-      const matched=allR(w).filter(r=>r.route.toLowerCase().includes(searchQ)||r.dsp.toLowerCase().includes(searchQ)||r.staging.toLowerCase().includes(searchQ));
+      const green=effGreen(w),red=effRed(w);
+      const matched=[...green,...red].filter(r=>r.route.toLowerCase()===searchQ||r.dsp.toLowerCase()===searchQ||r.staging.toLowerCase()===searchQ);
       if(!matched.length)return; found+=matched.length;
       html+=`<div class="sw-lbl">Wave ${w.time} — ${matched.length} result${matched.length!==1?'s':''}</div>
-        <div class="rgrid">${matched.map(r=>cardHtml(i,r,w.green.find(g=>g.route===r.route)?'green':'red')).join('')}</div>`;
+        <div class="rgrid">${matched.map(r=>cardHtml(i,r,green.find(g=>g.route===r.route)?'green':'red')).join('')}</div>`;
     });
     if(!found)html+=`<div class="no-results">No routes found for "<strong>${searchQ}</strong>"</div>`;
     mc.innerHTML=html+'</div>'; bindCards(mc); return;
   }
   let html='';
   WAVES.forEach((w,i)=>{
+    const green=effGreen(w),red=effRed(w);
     const done=inCount(i),miss=w.total-done,late=isLate(i)&&miss>0,allDone=miss===0,pct=Math.round(done/w.total*100),open=!!waveOpen[i];
     const badge=allDone?`<span class="bm bm-done">✅ Complete</span>`:late?`<span class="bm bm-late">🟡 ${miss} late</span>`:`<span class="bm bm-miss">● ${miss} missing</span>`;
     html+=`<div class="wave-accordion"><button class="wave-acc-hdr${open?' open':''}" onclick="toggleWave(${i})">
@@ -418,13 +548,13 @@ function renderMain(){
     </button>
     <div class="wave-acc-body${open?' open':''}">
       <div class="pills">
-        <span class="pill pt">Total: ${w.total}</span><span class="pill pg">🟢 B/D: ${w.green.length}</span>
-        <span class="pill pr">🔴 A/C: ${w.red.length}</span><span class="pill pd">✅ In: ${done}</span>
+        <span class="pill pt">Total: ${w.total}</span><span class="pill pg">🟢 B/D: ${green.length}</span>
+        <span class="pill pr">🔴 A/C: ${red.length}</span><span class="pill pd">✅ In: ${done}</span>
         ${late?`<span class="pill py">🟡 Late: ${miss}</span>`:''}
       </div>
-      ${w.green.length?`<div class="ghdr"><h3 style="color:var(--green)">🟢 Staging B &amp; D</h3><span class="gcnt">${w.green.length}</span></div><div class="rgrid">${w.green.map(r=>cardHtml(i,r,'green')).join('')}</div>`:''}
-      ${w.green.length&&w.red.length?'<hr class="divider"/>'  :''}
-      ${w.red.length?`<div class="ghdr"><h3 style="color:var(--red)">🔴 Staging A &amp; C</h3><span class="gcnt">${w.red.length}</span></div><div class="rgrid">${w.red.map(r=>cardHtml(i,r,'red')).join('')}</div>`:''}
+      ${green.length?`<div class="ghdr"><h3 style="color:var(--green)">🟢 Staging B &amp; D</h3><span class="gcnt">${green.length}</span></div><div class="rgrid">${green.map(r=>cardHtml(i,r,'green')).join('')}</div>`:''}
+      ${green.length&&red.length?'<hr class="divider"/>'  :''}
+      ${red.length?`<div class="ghdr"><h3 style="color:var(--red)">🔴 Staging A &amp; C</h3><span class="gcnt">${red.length}</span></div><div class="rgrid">${red.map(r=>cardHtml(i,r,'red')).join('')}</div>`:''}
     </div></div>`;
   });
   mc.innerHTML=html; bindCards(mc);
@@ -453,6 +583,28 @@ function renderReport(){
   const missAll=[]; WAVES.forEach((w,i)=>sortByDsp(allR(w).filter(r=>!isIn(i,r.route))).forEach(r=>missAll.push({wave:w.time,...r})));
   const missUni=[]; WAVES.forEach((w,i)=>sortByDsp(allR(w).filter(r=>isIn(i,r.route)&&!hasUniform(i,r.route))).forEach(r=>missUni.push({wave:w.time,...r})));
 
+  // Late arrivals calculation
+  const lateArrivals=[];
+  WAVES.forEach((w,i)=>{
+    const waveMinutes=wMin(w.time);
+    if(waveMinutes===9999)return;
+    const grace=waveMinutes+5;
+    allR(w).forEach(r=>{
+      if(!isIn(i,r.route))return;
+      const checkinStr=inTime(i,r.route);
+      if(!checkinStr)return;
+      // checkinStr is "HH:MM" in 24h format
+      const parts=checkinStr.match(/^(\d{1,2}):(\d{2})$/);
+      if(!parts)return;
+      const checkinMin=parseInt(parts[1])*60+parseInt(parts[2]);
+      if(checkinMin>grace){
+        const delay=checkinMin-waveMinutes;
+        lateArrivals.push({waveTime:w.time,route:r.route,dsp:r.dsp,staging:r.staging,checkinTime:checkinStr,delay});
+      }
+    });
+  });
+  lateArrivals.sort((a,b)=>b.delay-a.delay);
+
   rv.innerHTML=`<div class="rpt-title">📋 End of Day Yard Report</div>
   <div class="rpt-sub">DNX3 · CYCLE 1 · ${now.toLocaleDateString('en-GB',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})}</div>
   <div class="rsec"><div class="rsec-title">Overall Summary</div><div class="sgrid">
@@ -470,6 +622,10 @@ function renderReport(){
     <thead><tr><th>DSP</th><th>Total</th><th>Checked In</th><th>Uniform ✓</th><th>Uniform %</th><th>Missing</th><th>Completion</th></tr></thead>
     <tbody>${Object.entries(dspMap).sort((a,b)=>a[0].localeCompare(b[0])).map(([d,v])=>{const p=Math.round(v.i/v.t*100),m=v.t-v.i,up=v.i>0?Math.round(v.u/v.i*100):0;return`<tr><td><strong>${d}</strong></td><td>${v.t}</td><td>${v.i}</td><td>${v.u>0?`<span style="color:var(--green)">${v.u} 👕</span>`:'<span style="color:var(--subtext)">—</span>'}</td><td>${v.i>0?pb(up):'<span style="color:var(--subtext)">—</span>'}</td><td>${m===0?'<span style="color:var(--green)">0 ✅</span>':`<span style="color:var(--red)">${m}</span>`}</td><td>${pb(p)}</td></tr>`;}).join('')}</tbody>
   </table></div>
+  <div class="rsec"><div class="rsec-title">⏰ Late Arrivals (${lateArrivals.length})</div>${lateArrivals.length===0?'<div class="empty-sec">✅ No late arrivals!</div>':`<table class="rtbl">
+    <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Staging</th><th>Check-in Time</th><th>Delay (min)</th></tr></thead>
+    <tbody>${lateArrivals.map(l=>`<tr><td>${l.waveTime}</td><td><strong>${l.route}</strong></td><td>${l.dsp}</td><td>${l.staging}</td><td>${l.checkinTime}</td><td><span style="color:#dc2626;font-weight:700">+${l.delay}</span></td></tr>`).join('')}</tbody>
+  </table>`}</div>
   <div class="rsec"><div class="rsec-title">❌ Missing Routes — Never Arrived (${missAll.length})</div>${missAll.length===0?'<div class="empty-sec">✅ All routes checked in!</div>':`<div class="mrl">${missAll.map(mriRow).join('')}</div>`}</div>
   <div class="rsec"><div class="rsec-title">👕 Missing Uniform — Not Confirmed (${missUni.length})</div>${missUni.length===0?'<div class="empty-sec">✅ All checked-in drivers had uniform confirmed!</div>':`<div class="mrl">${missUni.map(mriRow).join('')}</div>`}</div>
   <div class="rsec"><div class="ractions"><button class="rabtn pri" onclick="window.print()">🖨️ Print</button><button class="rabtn" onclick="copyRpt()">📋 Copy</button></div></div>`;
@@ -482,6 +638,7 @@ function copyRpt(){
   WAVES.forEach((w,i)=>{const d=inCount(i);t+=`  ${w.time}: ${d}/${w.total} (${Math.round(d/w.total*100)}%) Uniform:${uniCount(i)}\n`;});
   t+=`\nMISSING ROUTES\n`; WAVES.forEach((w,i)=>sortByDsp(allR(w).filter(r=>!isIn(i,r.route))).forEach(r=>{t+=`  ${w.time}|${r.dsp}|${r.route}|${r.staging}\n`;}));
   t+=`\nMISSING UNIFORM\n`; WAVES.forEach((w,i)=>sortByDsp(allR(w).filter(r=>isIn(i,r.route)&&!hasUniform(i,r.route))).forEach(r=>{t+=`  ${w.time}|${r.dsp}|${r.route}|${r.staging}\n`;}));
+  t+=`\nLATE ARRIVALS\n`; WAVES.forEach((w,i)=>{const wm=wMin(w.time);if(wm===9999)return;const grace=wm+5;allR(w).forEach(r=>{if(!isIn(i,r.route))return;const ct=inTime(i,r.route);const p=ct.match(/^(\d{1,2}):(\d{2})$/);if(!p)return;const cm=parseInt(p[1])*60+parseInt(p[2]);if(cm>grace)t+=`  ${w.time}|${r.dsp}|${r.route}|${ct}|+${cm-wm}min\n`;});});
   navigator.clipboard.writeText(t).then(()=>showToast('📋 Copied!'));
 }
 
@@ -491,6 +648,19 @@ let parsedWaves=null;
 function renderImport(){
   const iv=document.getElementById('iv');
   const last=localStorage.getItem('dnx3_last_import')||'No import yet';
+  let scanlogHtml='';
+  if(ROLE==='manager'){
+    scanlogHtml=`<div class="scanlog-sec">
+      <div class="scanlog-title">📋 ScanLog — Override Staging</div>
+      <div class="scanlog-body">
+        <div class="scanlog-input-row">
+          <input type="text" id="scanlog-input" class="scanlog-input" placeholder="Type or scan tour number..." onkeydown="if(event.key==='Enter')addScanlogEntry()"/>
+          <button class="scanlog-add" onclick="addScanlogEntry()">Add</button>
+        </div>
+        ${scanlog.length?`<ul class="scanlog-list">${scanlog.map(r=>`<li class="scanlog-item"><span>${r}</span><button class="scanlog-rm" onclick="removeScanlogEntry('${r}')">×</button></li>`).join('')}</ul>`:'<div class="scanlog-empty">No entries yet. Scanned tours will be moved to A/C staging group.</div>'}
+      </div>
+    </div>`;
+  }
   iv.innerHTML=`<div class="import-wrap">
     <div class="import-title">📥 Import Today's Sequencing</div>
     <div class="import-sub">Drag and drop the Excel file below — the tracker will update for all devices automatically.</div>
@@ -502,11 +672,34 @@ function renderImport(){
     <input type="file" id="fi" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this.files[0])"/>
     <div id="preview-area"></div>
     <div class="import-last">Last import: ${last}</div>
+    ${scanlogHtml}
   </div>`;
   const dz=document.getElementById('dz');
   dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('over');});
   dz.addEventListener('dragleave',()=>dz.classList.remove('over'));
   dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('over');const f=e.dataTransfer.files[0];if(f)handleFile(f);});
+}
+
+async function addScanlogEntry(){
+  const inp=document.getElementById('scanlog-input');
+  if(!inp)return;
+  const route=inp.value.trim();
+  if(!route){showToast('⚠️ Enter a tour number');return;}
+  if(scanlog.includes(route)){showToast('⚠️ Already in ScanLog');inp.value='';return;}
+  scanlog.push(route);
+  inp.value='';
+  await apiAddScanlog(route);
+  showToast(`📋 ${route} added to ScanLog — moved to A/C group`);
+  render();
+  renderImport();
+}
+
+async function removeScanlogEntry(route){
+  scanlog=scanlog.filter(r=>r!==route);
+  await apiRemoveScanlog(route);
+  showToast(`📋 ${route} removed from ScanLog`);
+  render();
+  renderImport();
 }
 
 function handleFile(file){
