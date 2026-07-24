@@ -28,6 +28,22 @@ function uniCount(wi)     { return Object.values(state[String(wi)] || {}).filter
 function allR(w)          { return [...(w.green||[]), ...(w.red||[])]; }
 function sortByDsp(arr)   { return [...arr].sort((a,b)=>a.dsp.localeCompare(b.dsp)||a.route.localeCompare(b.route,undefined,{numeric:true})); }
 
+// Auto-detect route prefix from data (e.g. "CA_A" from "CA_A248")
+function getPrefix(){
+  try{
+    const first=WAVES[0].green[0]||WAVES[0].red[0];
+    if(!first)return '';
+    const m=first.route.match(/^([A-Z]{2}_[A-Z])/i);
+    return m?m[1]:'';
+  }catch(e){return '';}
+}
+function expandSearch(q){
+  q=q.trim();
+  if(!q)return '';
+  if(/^\d+$/.test(q)) return (getPrefix()+q).toLowerCase();
+  return q.toLowerCase();
+}
+
 // ScanLog helper: get effective green/red arrays for a wave considering scanlog overrides
 function effGreen(w){ return w.green.filter(r=>!scanlog.includes(r.route)); }
 function effRed(w){ return [...w.red, ...w.green.filter(r=>scanlog.includes(r.route))]; }
@@ -262,7 +278,7 @@ function connectSocket(){
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────
-function onSearch(){ searchQ=document.getElementById('si').value.trim().toLowerCase(); renderMain(); }
+function onSearch(){ searchQ=expandSearch(document.getElementById('si').value); renderMain(); }
 document.addEventListener('keydown',e=>{
   if(e.key==='/'&&document.activeElement!==document.getElementById('si')){e.preventDefault();document.getElementById('si').focus();}
   if(e.key==='Escape'){document.getElementById('si').value='';searchQ='';renderMain();closeNotePanel();}
@@ -654,7 +670,7 @@ function renderImport(){
       <div class="scanlog-title">📋 ScanLog — Override Staging</div>
       <div class="scanlog-body">
         <div class="scanlog-input-row">
-          <input type="text" id="scanlog-input" class="scanlog-input" placeholder="Type or scan tour number..." onkeydown="if(event.key==='Enter')addScanlogEntry()"/>
+          <input type="text" id="scanlog-input" class="scanlog-input" placeholder="Tour numbers (e.g. 249, 259, 5)..." onkeydown="if(event.key==='Enter')addScanlogEntry()"/>
           <button class="scanlog-add" onclick="addScanlogEntry()">Add</button>
         </div>
         ${scanlog.length?`<ul class="scanlog-list">${scanlog.map(r=>`<li class="scanlog-item"><span>${r}</span><button class="scanlog-rm" onclick="removeScanlogEntry('${r}')">×</button></li>`).join('')}</ul>`:'<div class="scanlog-empty">No entries yet. Scanned tours will be moved to A/C staging group.</div>'}
@@ -683,16 +699,25 @@ function renderImport(){
 async function addScanlogEntry(){
   const inp=document.getElementById('scanlog-input');
   if(!inp)return;
-  const route=inp.value.trim();
-  if(!route){showToast('⚠️ Enter a tour number');return;}
-  if(scanlog.includes(route)){showToast('⚠️ Already in ScanLog');inp.value='';return;}
-  scanlog.push(route);
+  const raw=inp.value.trim();
+  if(!raw){showToast('\u26a0\ufe0f Enter a tour number');return;}
+  const prefix=getPrefix();
+  const parts=raw.split(/[,;\s]+/).filter(Boolean);
+  const added=[];
+  for(const part of parts){
+    const route=/^\d+$/.test(part)?(prefix+part):part.toUpperCase();
+    if(scanlog.includes(route))continue;
+    scanlog.push(route);
+    await apiAddScanlog(route);
+    added.push(route);
+  }
   inp.value='';
-  await apiAddScanlog(route);
-  showToast(`📋 ${route} added to ScanLog — moved to A/C group`);
+  if(added.length===0){showToast('\u26a0\ufe0f All entries already in ScanLog');return;}
+  showToast(`\ud83d\udccb ${added.length} tour${added.length>1?'s':''} added to ScanLog`);
   render();
   renderImport();
 }
+
 
 async function removeScanlogEntry(route){
   scanlog=scanlog.filter(r=>r!==route);
