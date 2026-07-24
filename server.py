@@ -63,10 +63,29 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 def load_notes():
+    """Load notes with backward compatibility.
+    Old format: { "route": "text string" }
+    New format: { "route": {"text": "...", "otd": false} }
+    On read, migrate old string values to new format."""
     if os.path.isfile(NOTES_FILE):
         try:
             with open(NOTES_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                raw = json.load(f)
+            # Migrate old format
+            migrated = False
+            for route, val in raw.items():
+                if isinstance(val, str):
+                    raw[route] = {"text": val, "otd": False}
+                    migrated = True
+                elif isinstance(val, dict):
+                    # Ensure both keys exist
+                    if "text" not in val:
+                        val["text"] = ""
+                    if "otd" not in val:
+                        val["otd"] = False
+            if migrated:
+                save_notes(raw)
+            return raw
         except Exception:
             pass
     return {}
@@ -249,15 +268,16 @@ def save_note():
     body  = request.get_json(silent=True) or {}
     route = body.get('route', '')
     text  = body.get('text', '')
+    otd   = body.get('otd', False)
     if not route:
         return jsonify({'error': 'Missing route'}), 400
     notes = load_notes()
-    if text:
-        notes[route] = text
+    if text or otd:
+        notes[route] = {"text": text, "otd": bool(otd)}
     else:
         notes.pop(route, None)
     save_notes(notes)
-    socketio.emit('notes_update', {'route': route, 'text': text})
+    socketio.emit('notes_update', {'route': route, 'text': text, 'otd': bool(otd)})
     return jsonify({'ok': True})
 
 # — ScanLog endpoints (manager only) —————————————————————————————

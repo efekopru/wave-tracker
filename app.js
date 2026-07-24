@@ -8,7 +8,7 @@ let ROLE  = localStorage.getItem('dnx3_role')  || '';
 
 // ── App state ─────────────────────────────────────────────────────────────────
 let state       = {};   // waveIdx -> { route -> { time, uniform } }
-let notes       = {};   // route -> text
+let notes       = {};   // route -> {text, otd}
 let scanlog     = [];   // array of route strings
 let waveOpen    = {};
 let missingOpen = {};
@@ -27,6 +27,11 @@ function inCount(wi)      { return Object.keys(state[String(wi)] || {}).length; 
 function uniCount(wi)     { return Object.values(state[String(wi)] || {}).filter(v=>v.uniform).length; }
 function allR(w)          { return [...(w.green||[]), ...(w.red||[])]; }
 function sortByDsp(arr)   { return [...arr].sort((a,b)=>a.dsp.localeCompare(b.dsp)||a.route.localeCompare(b.route,undefined,{numeric:true})); }
+
+// Notes helper: get text/otd from notes object with backward compat
+function getNoteText(route){ const n=notes[route]; if(!n)return ''; if(typeof n==='string')return n; return n.text||''; }
+function getNoteOtd(route){ const n=notes[route]; if(!n)return false; if(typeof n==='string')return false; return !!n.otd; }
+function hasNote(route){ return !!getNoteText(route); }
 
 // Auto-detect route prefix from data (e.g. "CA_A" from "CA_A248")
 function getPrefix(){
@@ -200,10 +205,10 @@ async function apiResetWave(wi){
   }catch(e){showToast('⚠️ Sync error');}
 }
 
-async function apiSaveNote(route,text){
+async function apiSaveNote(route,text,otd){
   try{
     await fetch('/api/notes',{method:'POST',headers:{'Content-Type':'application/json','X-Token':TOKEN},
-      body:JSON.stringify({route,text})});
+      body:JSON.stringify({route,text,otd})});
   }catch(e){showToast('⚠️ Sync error');}
 }
 
@@ -262,13 +267,19 @@ function connectSocket(){
   });
 
   socket.on('notes_update',d=>{
-    if(d.text) notes[d.route]=d.text;
-    else delete notes[d.route];
-    // If note panel is open for this route, update textarea
+    if(d.text || d.otd) {
+      notes[d.route]={text:d.text||'', otd:!!d.otd};
+    } else {
+      delete notes[d.route];
+    }
+    // If note panel is open for this route, update textarea and checkbox
     if(notePanel.open && notePanel.route===d.route){
       const ta=document.getElementById('note-ta');
       if(ta) ta.value=d.text||'';
+      const cb=document.getElementById('note-otd');
+      if(cb) cb.checked=!!d.otd;
     }
+    render();
   });
 
   socket.on('scanlog_update',d=>{
@@ -298,8 +309,11 @@ function switchTab(t){
 function openNotePanel(route){
   notePanel={open:true,route};
   const panel=document.getElementById('note-panel');
+  const currentText=getNoteText(route);
+  const currentOtd=getNoteOtd(route);
   panel.innerHTML=`<div class="np-header"><span class="np-title">📝 ${route}</span><button class="np-close" onclick="closeNotePanel()">✕</button></div>
-    <textarea id="note-ta" class="np-textarea" placeholder="Add notes for ${route}...">${notes[route]||''}</textarea>
+    <textarea id="note-ta" class="np-textarea" placeholder="Add notes for ${route}...">${currentText}</textarea>
+    <div class="np-otd-row"><label class="np-otd-label"><input type="checkbox" id="note-otd" class="np-otd-cb" ${currentOtd?'checked':''}/>  <span class="np-otd-text">🎯 Mark as OTD Hit</span></label></div>
     <div class="np-actions"><button class="rabtn pri" onclick="saveNote()">💾 Save</button><button class="rabtn" onclick="closeNotePanel()">Close</button></div>`;
   panel.classList.add('open');
 }
@@ -310,11 +324,18 @@ function closeNotePanel(){
 }
 async function saveNote(){
   const ta=document.getElementById('note-ta');
+  const cb=document.getElementById('note-otd');
   if(!ta)return;
   const text=ta.value.trim();
-  notes[notePanel.route]=text;
-  await apiSaveNote(notePanel.route,text);
+  const otd=cb?cb.checked:false;
+  if(text||otd){
+    notes[notePanel.route]={text,otd};
+  } else {
+    delete notes[notePanel.route];
+  }
+  await apiSaveNote(notePanel.route,text,otd);
   showToast(`📝 Note saved for ${notePanel.route}`);
+  render();
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -397,6 +418,7 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .pen-btn:hover{background:rgba(255,255,255,.8);}
 .pen-btn.has-note{background:#fef3c7;border-color:#f59e0b;}
 .dark .pen-btn.has-note{background:#451a03;border-color:#f59e0b;}
+.otd-badge{position:absolute;top:4px;left:7px;font-size:.7rem;}
 .sw-lbl{font-size:.7rem;font-weight:700;color:var(--subtext);text-transform:uppercase;letter-spacing:.6px;padding:6px 0 4px;border-top:1px solid var(--border);margin-top:4px;}
 .sw-lbl:first-child{border-top:none;margin-top:0;}
 .srwrap{padding:14px;}.srwrap .rgrid{margin-bottom:6px;}
@@ -410,6 +432,11 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .np-close:hover{background:var(--surface2);}
 .np-textarea{flex:1;margin:14px 16px;padding:12px;border:1px solid var(--border);border-radius:8px;resize:none;font-size:.82rem;font-family:inherit;background:var(--bg);color:var(--text);outline:none;}
 .np-textarea:focus{border-color:#3b82f6;}
+.np-otd-row{padding:0 16px 10px;display:flex;align-items:center;}
+.np-otd-label{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.82rem;font-weight:600;color:var(--text);padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface2);transition:border-color .15s,background .15s;}
+.np-otd-label:hover{border-color:#3b82f6;background:var(--bg);}
+.np-otd-cb{width:16px;height:16px;accent-color:#3b82f6;cursor:pointer;}
+.np-otd-text{user-select:none;}
 .np-actions{display:flex;gap:9px;padding:12px 16px;border-top:1px solid var(--border);}
 /* ScanLog */
 .scanlog-sec{margin-top:24px;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
@@ -431,6 +458,12 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .rpt-sub{font-size:.76rem;color:var(--subtext);margin-bottom:16px;}
 .rsec{background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:13px;overflow:hidden;}
 .rsec-title{font-size:.71rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--subtext);padding:10px 14px 8px;border-bottom:1px solid var(--border);}
+.rsec-title.collapsible{cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none;}
+.rsec-title.collapsible:hover{background:var(--surface2);}
+.rsec-title .coll-chev{font-size:.55rem;transition:transform .2s;}
+.rsec-title.collapsible.open .coll-chev{transform:rotate(90deg);}
+.rsec-body{display:none;}
+.rsec-body.open{display:block;}
 .sgrid{display:grid;grid-template-columns:repeat(5,1fr);}
 .sstat{padding:13px 10px;text-align:center;border-right:1px solid var(--border);}
 .sstat:last-child{border-right:none;}
@@ -481,12 +514,14 @@ function cardHtml(wi,r,color){
   const late=isLate(wi)&&!chk, eff=late?'late':color;
   const q=searchQ;
   const match=!q||r.route.toLowerCase()===q||r.dsp.toLowerCase()===q||r.staging.toLowerCase()===q;
-  const hasNote=!!notes[r.route];
+  const hasN=hasNote(r.route);
+  const isOtd=getNoteOtd(r.route);
   return`<div class="rcard ${eff}${chk?' checked':''}${q&&!match?' dimmed':''}" data-wi="${wi}" data-r="${r.route}">
     <div class="ck">✓</div>
+    ${isOtd?'<span class="otd-badge">🎯</span>':''}
     <div class="cr">${r.route}</div><div class="cs">${r.staging}</div><div class="cd">${r.dsp}</div>
     ${t?`<div class="ct">${t}</div>`:''}
-    <div class="urow"><button class="ubtn${uni?' on':''}" data-wi="${wi}" data-r="${r.route}" data-action="u" onclick="event.stopPropagation()"><span>👕</span>${uni?' Uniform ✓':' Uniform'}</button><button class="pen-btn${hasNote?' has-note':''}" data-r="${r.route}" data-action="note" onclick="event.stopPropagation()">✏️</button></div>
+    <div class="urow"><button class="ubtn${uni?' on':''}" data-wi="${wi}" data-r="${r.route}" data-action="u" onclick="event.stopPropagation()"><span>👕</span>${uni?' Uniform ✓':' Uniform'}</button><button class="pen-btn${hasN?' has-note':''}" data-r="${r.route}" data-action="note" onclick="event.stopPropagation()">✏️</button></div>
   </div>`;
 }
 
@@ -581,25 +616,16 @@ function toggleWave(i){ waveOpen[i]=!waveOpen[i]; renderMain(); }
 function playDing(){try{const c=new(window.AudioContext||window.webkitAudioContext)(),o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.frequency.setValueAtTime(880,c.currentTime);o.frequency.exponentialRampToValueAtTime(1320,c.currentTime+.15);g.gain.setValueAtTime(.28,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.7);o.start();o.stop(c.currentTime+.7);}catch(e){}}
 
 // ── Report ────────────────────────────────────────────────────────────────────
-function pb(p){const cls=p===100?'pb-g':p>=80?'pb-y':'pb-r';const tag=p===100?`<span class="t100">100%</span>`:p>=80?`<span class="twarn">${p}%</span>`:`<span class="tbad">${p}%</span>`;return`${tag}<span class="pbar-w"><span class="pbar ${cls}" style="width:${p}%"></span></span>`;}
-function mriRow(r){return`<div class="mri"><span class="mri-w">${r.wave}</span><span class="mri-r">${r.route}</span><span class="mri-s">${r.staging}</span><span class="mri-d">${r.dsp}</span></div>`;}
+// Report collapsible state
+let rptCollapse={late:false,otd:false,uniform:false};
 
-function renderReport(){
-  const rv=document.getElementById('rv');
-  const now=new Date();
+function pb(p){const cls=p===100?'pb-g':p>=80?'pb-y':'pb-r';const tag=p===100?`<span class="t100">100%</span>`:p>=80?`<span class="twarn">${p}%</span>`:`<span class="tbad">${p}%</span>`;return`${tag}<span class="pbar-w"><span class="pbar ${cls}" style="width:${p}%"></span></span>`;}
+
+function getReportData(){
   let tot=0,tin=0,tuni=0;
   WAVES.forEach((w,i)=>{tot+=w.total;tin+=inCount(i);tuni+=uniCount(i);});
-  const tmiss=tot-tin,pctIn=Math.round(tin/tot*100);
-  const dspMap={};
-  WAVES.forEach((w,i)=>allR(w).forEach(r=>{
-    if(!dspMap[r.dsp])dspMap[r.dsp]={t:0,i:0,u:0};
-    dspMap[r.dsp].t++;
-    if(isIn(i,r.route)){dspMap[r.dsp].i++;if(hasUniform(i,r.route))dspMap[r.dsp].u++;}
-  }));
-  const missAll=[]; WAVES.forEach((w,i)=>sortByDsp(allR(w).filter(r=>!isIn(i,r.route))).forEach(r=>missAll.push({wave:w.time,...r})));
-  const missUni=[]; WAVES.forEach((w,i)=>sortByDsp(allR(w).filter(r=>isIn(i,r.route)&&!hasUniform(i,r.route))).forEach(r=>missUni.push({wave:w.time,...r})));
 
-  // Late arrivals calculation
+  // Late arrivals: routes checked in >5 min after wave time
   const lateArrivals=[];
   WAVES.forEach((w,i)=>{
     const waveMinutes=wMin(w.time);
@@ -609,53 +635,252 @@ function renderReport(){
       if(!isIn(i,r.route))return;
       const checkinStr=inTime(i,r.route);
       if(!checkinStr)return;
-      // checkinStr is "HH:MM" in 24h format
       const parts=checkinStr.match(/^(\d{1,2}):(\d{2})$/);
       if(!parts)return;
       const checkinMin=parseInt(parts[1])*60+parseInt(parts[2]);
       if(checkinMin>grace){
-        const delay=checkinMin-waveMinutes;
-        lateArrivals.push({waveTime:w.time,route:r.route,dsp:r.dsp,staging:r.staging,checkinTime:checkinStr,delay});
+        lateArrivals.push({waveTime:w.time,route:r.route,dsp:r.dsp,staging:r.staging,checkinTime:checkinStr,delay:checkinMin-waveMinutes});
       }
     });
   });
   lateArrivals.sort((a,b)=>b.delay-a.delay);
 
-  rv.innerHTML=`<div class="rpt-title">📋 End of Day Yard Report</div>
-  <div class="rpt-sub">DNX3 · CYCLE 1 · ${now.toLocaleDateString('en-GB',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})}</div>
-  <div class="rsec"><div class="rsec-title">Overall Summary</div><div class="sgrid">
-    <div class="sstat"><div class="sval sv-blue">${tot}</div><div class="slbl">Total Routes</div></div>
-    <div class="sstat"><div class="sval sv-green">${tin}</div><div class="slbl">Checked In</div></div>
-    <div class="sstat"><div class="sval sv-red">${tmiss}</div><div class="slbl">Never Arrived</div></div>
-    <div class="sstat"><div class="sval sv-amber">${tuni}</div><div class="slbl">Uniform ✓</div></div>
-    <div class="sstat"><div class="sval ${pctIn===100?'sv-green':pctIn>=80?'sv-amber':'sv-red'}">${pctIn}%</div><div class="slbl">Completion</div></div>
+  // OTD Hits: routes marked as OTD
+  const otdHits=[];
+  WAVES.forEach((w,i)=>{
+    allR(w).forEach(r=>{
+      if(getNoteOtd(r.route)){
+        otdHits.push({waveTime:w.time,route:r.route,dsp:r.dsp,checkinTime:inTime(i,r.route)||'—',noteText:getNoteText(r.route)});
+      }
+    });
+  });
+
+  // Missing uniform: checked in but no uniform
+  const missUni=[];
+  WAVES.forEach((w,i)=>{
+    sortByDsp(allR(w).filter(r=>isIn(i,r.route)&&!hasUniform(i,r.route))).forEach(r=>{
+      missUni.push({waveTime:w.time,route:r.route,dsp:r.dsp});
+    });
+  });
+
+  // Uniform compliance %
+  const uniPct=tin>0?Math.round(tuni/tin*100):0;
+
+  // Expected OTD %
+  const otdPct=tot>0?Math.round(otdHits.length/tot*100):0;
+
+  // Wave breakdown with late/otd per wave
+  const waveBreakdown=WAVES.map((w,i)=>{
+    const waveMinutes=wMin(w.time);
+    let wLate=0;
+    if(waveMinutes!==9999){
+      const grace=waveMinutes+5;
+      allR(w).forEach(r=>{
+        if(!isIn(i,r.route))return;
+        const ct=inTime(i,r.route);
+        if(!ct)return;
+        const p=ct.match(/^(\d{1,2}):(\d{2})$/);
+        if(!p)return;
+        if(parseInt(p[1])*60+parseInt(p[2])>grace)wLate++;
+      });
+    }
+    let wOtd=0;
+    allR(w).forEach(r=>{ if(getNoteOtd(r.route))wOtd++; });
+    return {time:w.time,total:w.total,late:wLate,otd:wOtd};
+  });
+
+  // DSP breakdown with late/otd/uniform
+  const dspMap={};
+  WAVES.forEach((w,i)=>{
+    const waveMinutes=wMin(w.time);
+    const grace=waveMinutes!==9999?waveMinutes+5:99999;
+    allR(w).forEach(r=>{
+      if(!dspMap[r.dsp])dspMap[r.dsp]={total:0,late:0,otd:0,uniformIn:0,checkedIn:0};
+      dspMap[r.dsp].total++;
+      if(isIn(i,r.route)){
+        dspMap[r.dsp].checkedIn++;
+        if(hasUniform(i,r.route))dspMap[r.dsp].uniformIn++;
+        const ct=inTime(i,r.route);
+        if(ct&&waveMinutes!==9999){
+          const p=ct.match(/^(\d{1,2}):(\d{2})$/);
+          if(p&&parseInt(p[1])*60+parseInt(p[2])>grace)dspMap[r.dsp].late++;
+        }
+      }
+      if(getNoteOtd(r.route))dspMap[r.dsp].otd++;
+    });
+  });
+
+  return {tot,tin,tuni,uniPct,otdPct,lateArrivals,otdHits,missUni,waveBreakdown,dspMap};
+}
+
+function renderReport(){
+  const rv=document.getElementById('rv');
+  const now=new Date();
+  const d=getReportData();
+
+  rv.innerHTML=`<div class="rpt-title">📋 End of Day Yard Breakdown</div>
+  <div class="rpt-sub">DNX3 · ${now.toLocaleDateString('en-GB',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})}</div>
+
+  <!-- Overview Summary -->
+  <div class="rsec"><div class="rsec-title">Overview Summary</div><div class="sgrid">
+    <div class="sstat"><div class="sval sv-blue">${d.tot}</div><div class="slbl">Total Routes</div></div>
+    <div class="sstat"><div class="sval sv-red">${d.lateArrivals.length}</div><div class="slbl">Late Entries</div></div>
+    <div class="sstat"><div class="sval sv-amber">${d.otdHits.length}</div><div class="slbl">OTD Hits</div></div>
+    <div class="sstat"><div class="sval sv-green">${d.uniPct}%</div><div class="slbl">Uniform Compliance</div></div>
+    <div class="sstat"><div class="sval ${d.otdPct>=80?'sv-green':d.otdPct>=50?'sv-amber':'sv-red'}">${d.otdPct}%</div><div class="slbl">Expected OTD</div></div>
   </div></div>
+
+  <!-- Wave Breakdown -->
   <div class="rsec"><div class="rsec-title">Wave Breakdown</div><table class="rtbl">
-    <thead><tr><th>Wave</th><th>Total</th><th>Checked In</th><th>Uniform ✓</th><th>Missing</th><th>Completion</th></tr></thead>
-    <tbody>${WAVES.map((w,i)=>{const d=inCount(i),u=uniCount(i),m=w.total-d,p=Math.round(d/w.total*100);return`<tr><td><strong>${w.time}</strong></td><td>${w.total}</td><td>${d}</td><td>${u>0?`<span style="color:var(--green)">${u} 👕</span>`:'<span style="color:var(--subtext)">—</span>'}</td><td>${m===0?'<span style="color:var(--green)">0 ✅</span>':`<span style="color:var(--red)">${m}</span>`}</td><td>${pb(p)}</td></tr>`;}).join('')}</tbody>
+    <thead><tr><th>Wave Time</th><th>Total Routes</th><th>Late Entries</th><th>OTD Hits</th></tr></thead>
+    <tbody>${d.waveBreakdown.map(w=>`<tr><td><strong>${w.time}</strong></td><td>${w.total}</td><td>${w.late>0?`<span style="color:var(--red)">${w.late}</span>`:'<span style="color:var(--green)">0</span>'}</td><td>${w.otd>0?`<span style="color:#d97706;font-weight:700">${w.otd} 🎯</span>`:'<span style="color:var(--subtext)">0</span>'}</td></tr>`).join('')}</tbody>
   </table></div>
+
+  <!-- DSP Performance -->
   <div class="rsec"><div class="rsec-title">DSP Performance</div><table class="rtbl">
-    <thead><tr><th>DSP</th><th>Total</th><th>Checked In</th><th>Uniform ✓</th><th>Uniform %</th><th>Missing</th><th>Completion</th></tr></thead>
-    <tbody>${Object.entries(dspMap).sort((a,b)=>a[0].localeCompare(b[0])).map(([d,v])=>{const p=Math.round(v.i/v.t*100),m=v.t-v.i,up=v.i>0?Math.round(v.u/v.i*100):0;return`<tr><td><strong>${d}</strong></td><td>${v.t}</td><td>${v.i}</td><td>${v.u>0?`<span style="color:var(--green)">${v.u} 👕</span>`:'<span style="color:var(--subtext)">—</span>'}</td><td>${v.i>0?pb(up):'<span style="color:var(--subtext)">—</span>'}</td><td>${m===0?'<span style="color:var(--green)">0 ✅</span>':`<span style="color:var(--red)">${m}</span>`}</td><td>${pb(p)}</td></tr>`;}).join('')}</tbody>
+    <thead><tr><th>DSP</th><th>Total Routes</th><th>Late Entries</th><th>OTD Hits</th><th>Uniform Compliance</th></tr></thead>
+    <tbody>${Object.entries(d.dspMap).sort((a,b)=>a[0].localeCompare(b[0])).map(([name,v])=>{
+      const up=v.checkedIn>0?Math.round(v.uniformIn/v.checkedIn*100):0;
+      return`<tr><td><strong>${name}</strong></td><td>${v.total}</td><td>${v.late>0?`<span style="color:var(--red)">${v.late}</span>`:'<span style="color:var(--green)">0</span>'}</td><td>${v.otd>0?`<span style="color:#d97706;font-weight:700">${v.otd} 🎯</span>`:'<span style="color:var(--subtext)">0</span>'}</td><td>${v.checkedIn>0?pb(up):'<span style="color:var(--subtext)">—</span>'}</td></tr>`;
+    }).join('')}</tbody>
   </table></div>
-  <div class="rsec"><div class="rsec-title">⏰ Late Arrivals (${lateArrivals.length})</div>${lateArrivals.length===0?'<div class="empty-sec">✅ No late arrivals!</div>':`<table class="rtbl">
-    <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Staging</th><th>Check-in Time</th><th>Delay (min)</th></tr></thead>
-    <tbody>${lateArrivals.map(l=>`<tr><td>${l.waveTime}</td><td><strong>${l.route}</strong></td><td>${l.dsp}</td><td>${l.staging}</td><td>${l.checkinTime}</td><td><span style="color:#dc2626;font-weight:700">+${l.delay}</span></td></tr>`).join('')}</tbody>
-  </table>`}</div>
-  <div class="rsec"><div class="rsec-title">❌ Missing Routes — Never Arrived (${missAll.length})</div>${missAll.length===0?'<div class="empty-sec">✅ All routes checked in!</div>':`<div class="mrl">${missAll.map(mriRow).join('')}</div>`}</div>
-  <div class="rsec"><div class="rsec-title">👕 Missing Uniform — Not Confirmed (${missUni.length})</div>${missUni.length===0?'<div class="empty-sec">✅ All checked-in drivers had uniform confirmed!</div>':`<div class="mrl">${missUni.map(mriRow).join('')}</div>`}</div>
-  <div class="rsec"><div class="ractions"><button class="rabtn pri" onclick="window.print()">🖨️ Print</button><button class="rabtn" onclick="copyRpt()">📋 Copy</button></div></div>`;
+
+  <!-- Late Arrivals (collapsible) -->
+  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.late?' open':''}" onclick="toggleRptSec('late')"><span class="coll-chev">▶</span> ⏰ Late Arrivals (${d.lateArrivals.length})</div>
+  <div class="rsec-body${rptCollapse.late?' open':''}" id="rpt-late">${d.lateArrivals.length===0?'<div class="empty-sec">✅ No late arrivals!</div>':`<table class="rtbl">
+    <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th></tr></thead>
+    <tbody>${d.lateArrivals.map(l=>`<tr><td>${l.waveTime}</td><td><strong>${l.route}</strong></td><td>${l.dsp}</td><td><span style="color:#dc2626;font-weight:600">${l.checkinTime}</span> <span style="color:var(--subtext);font-size:.65rem">(+${l.delay}min)</span></td></tr>`).join('')}</tbody>
+  </table>`}</div></div>
+
+  <!-- OTD Hits (collapsible) -->
+  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.otd?' open':''}" onclick="toggleRptSec('otd')"><span class="coll-chev">▶</span> 🎯 OTD Hits (${d.otdHits.length})</div>
+  <div class="rsec-body${rptCollapse.otd?' open':''}" id="rpt-otd">${d.otdHits.length===0?'<div class="empty-sec">No OTD hits marked yet.</div>':`<table class="rtbl">
+    <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th><th>Notes Taken</th></tr></thead>
+    <tbody>${d.otdHits.map(o=>`<tr><td>${o.waveTime}</td><td><strong>${o.route}</strong></td><td>${o.dsp}</td><td>${o.checkinTime}</td><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${o.noteText||'—'}</td></tr>`).join('')}</tbody>
+  </table>`}</div></div>
+
+  <!-- Missing Uniform (collapsible) -->
+  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.uniform?' open':''}" onclick="toggleRptSec('uniform')"><span class="coll-chev">▶</span> 👕 Missing Uniform (${d.missUni.length})</div>
+  <div class="rsec-body${rptCollapse.uniform?' open':''}" id="rpt-uniform">${d.missUni.length===0?'<div class="empty-sec">✅ All checked-in drivers had uniform confirmed!</div>':`<table class="rtbl">
+    <thead><tr><th>DSP</th><th>Route</th><th>Wave Time</th></tr></thead>
+    <tbody>${d.missUni.map(u=>`<tr><td><strong>${u.dsp}</strong></td><td>${u.route}</td><td>${u.waveTime}</td></tr>`).join('')}</tbody>
+  </table>`}</div></div>
+
+  <!-- Actions -->
+  <div class="rsec"><div class="ractions"><button class="rabtn pri" onclick="downloadRpt()">⬇️ Download</button><button class="rabtn" onclick="copyRpt()">📋 Copy</button></div></div>`;
+}
+
+function toggleRptSec(key){
+  rptCollapse[key]=!rptCollapse[key];
+  renderReport();
 }
 
 function copyRpt(){
-  let t=`DNX3 End of Day Report\n${'─'.repeat(40)}\n`;
-  let tot=0,tin=0,tuni=0; WAVES.forEach((w,i)=>{tot+=w.total;tin+=inCount(i);tuni+=uniCount(i);});
-  t+=`Total: ${tot} | In: ${tin} | Missing: ${tot-tin} | Uniform: ${tuni} | ${Math.round(tin/tot*100)}%\n\nWAVES\n`;
-  WAVES.forEach((w,i)=>{const d=inCount(i);t+=`  ${w.time}: ${d}/${w.total} (${Math.round(d/w.total*100)}%) Uniform:${uniCount(i)}\n`;});
-  t+=`\nMISSING ROUTES\n`; WAVES.forEach((w,i)=>sortByDsp(allR(w).filter(r=>!isIn(i,r.route))).forEach(r=>{t+=`  ${w.time}|${r.dsp}|${r.route}|${r.staging}\n`;}));
-  t+=`\nMISSING UNIFORM\n`; WAVES.forEach((w,i)=>sortByDsp(allR(w).filter(r=>isIn(i,r.route)&&!hasUniform(i,r.route))).forEach(r=>{t+=`  ${w.time}|${r.dsp}|${r.route}|${r.staging}\n`;}));
-  t+=`\nLATE ARRIVALS\n`; WAVES.forEach((w,i)=>{const wm=wMin(w.time);if(wm===9999)return;const grace=wm+5;allR(w).forEach(r=>{if(!isIn(i,r.route))return;const ct=inTime(i,r.route);const p=ct.match(/^(\d{1,2}):(\d{2})$/);if(!p)return;const cm=parseInt(p[1])*60+parseInt(p[2]);if(cm>grace)t+=`  ${w.time}|${r.dsp}|${r.route}|${ct}|+${cm-wm}min\n`;});});
+  const d=getReportData();
+  let t=`DNX3 End of Day Yard Breakdown\n${'─'.repeat(45)}\n\n`;
+  t+=`OVERVIEW SUMMARY\n`;
+  t+=`  Total Routes: ${d.tot}\n`;
+  t+=`  Late Entries: ${d.lateArrivals.length}\n`;
+  t+=`  OTD Hits: ${d.otdHits.length}\n`;
+  t+=`  Uniform Compliance: ${d.uniPct}%\n`;
+  t+=`  Expected OTD: ${d.otdPct}%\n\n`;
+
+  t+=`WAVE BREAKDOWN\n`;
+  d.waveBreakdown.forEach(w=>{
+    t+=`  ${w.time}: ${w.total} routes | ${w.late} late | ${w.otd} OTD\n`;
+  });
+
+  t+=`\nDSP PERFORMANCE\n`;
+  Object.entries(d.dspMap).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([name,v])=>{
+    const up=v.checkedIn>0?Math.round(v.uniformIn/v.checkedIn*100):0;
+    t+=`  ${name}: ${v.total} routes | ${v.late} late | ${v.otd} OTD | Uniform ${up}%\n`;
+  });
+
+  t+=`\nLATE ARRIVALS (${d.lateArrivals.length})\n`;
+  if(d.lateArrivals.length===0) t+=`  ✅ None\n`;
+  else d.lateArrivals.forEach(l=>{ t+=`  ${l.waveTime} | ${l.route} | ${l.dsp} | ${l.checkinTime} (+${l.delay}min)\n`; });
+
+  t+=`\nOTD HITS (${d.otdHits.length})\n`;
+  if(d.otdHits.length===0) t+=`  None marked\n`;
+  else d.otdHits.forEach(o=>{ t+=`  ${o.waveTime} | ${o.route} | ${o.dsp} | ${o.checkinTime} | ${o.noteText||'—'}\n`; });
+
+  t+=`\nMISSING UNIFORM (${d.missUni.length})\n`;
+  if(d.missUni.length===0) t+=`  ✅ All confirmed\n`;
+  else d.missUni.forEach(u=>{ t+=`  ${u.dsp} | ${u.route} | ${u.waveTime}\n`; });
+
   navigator.clipboard.writeText(t).then(()=>showToast('📋 Copied!'));
+}
+
+
+
+function downloadRpt(){
+  const d=getReportData();
+  const now=new Date();
+  const dateStr=now.toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'});
+  let t=`DNX3 End of Day Yard Breakdown\n`;
+  t+=`Date: ${dateStr}\n`;
+  t+=`${'\u2500'.repeat(50)}\n\n`;
+
+  t+=`OVERVIEW SUMMARY\n`;
+  t+=`  Total Routes: ${d.tot}\n`;
+  t+=`  Late Entries: ${d.lateArrivals.length}\n`;
+  t+=`  OTD Hits: ${d.otdHits.length}\n`;
+  t+=`  Uniform Compliance: ${d.uniPct}%\n`;
+  t+=`  Expected OTD: ${d.otdPct}%\n\n`;
+
+  t+=`WAVE BREAKDOWN\n`;
+  t+=`  ${'Wave Time'.padEnd(12)}${'Total'.padEnd(8)}${'Late'.padEnd(8)}OTD\n`;
+  t+=`  ${'\u2500'.repeat(36)}\n`;
+  d.waveBreakdown.forEach(w=>{
+    t+=`  ${w.time.padEnd(12)}${String(w.total).padEnd(8)}${String(w.late).padEnd(8)}${w.otd}\n`;
+  });
+
+  t+=`\nDSP PERFORMANCE\n`;
+  t+=`  ${'DSP'.padEnd(8)}${'Total'.padEnd(8)}${'Late'.padEnd(8)}${'OTD'.padEnd(8)}Uniform\n`;
+  t+=`  ${'\u2500'.repeat(40)}\n`;
+  Object.entries(d.dspMap).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([name,v])=>{
+    const up=v.checkedIn>0?Math.round(v.uniformIn/v.checkedIn*100):0;
+    t+=`  ${name.padEnd(8)}${String(v.total).padEnd(8)}${String(v.late).padEnd(8)}${String(v.otd).padEnd(8)}${up}%\n`;
+  });
+
+  t+=`\nLATE ARRIVALS (${d.lateArrivals.length})\n`;
+  if(d.lateArrivals.length===0) t+=`  None\n`;
+  else{
+    t+=`  ${'Wave'.padEnd(12)}${'Route'.padEnd(12)}${'DSP'.padEnd(8)}Check-in\n`;
+    t+=`  ${'\u2500'.repeat(44)}\n`;
+    d.lateArrivals.forEach(l=>{ t+=`  ${l.waveTime.padEnd(12)}${l.route.padEnd(12)}${l.dsp.padEnd(8)}${l.checkinTime} (+${l.delay}min)\n`; });
+  }
+
+  t+=`\nOTD HITS (${d.otdHits.length})\n`;
+  if(d.otdHits.length===0) t+=`  None marked\n`;
+  else{
+    t+=`  ${'Wave'.padEnd(12)}${'Route'.padEnd(12)}${'DSP'.padEnd(8)}${'Check-in'.padEnd(10)}Notes\n`;
+    t+=`  ${'\u2500'.repeat(54)}\n`;
+    d.otdHits.forEach(o=>{ t+=`  ${o.waveTime.padEnd(12)}${o.route.padEnd(12)}${o.dsp.padEnd(8)}${(o.checkinTime||'—').padEnd(10)}${o.noteText||'—'}\n`; });
+  }
+
+  t+=`\nMISSING UNIFORM (${d.missUni.length})\n`;
+  if(d.missUni.length===0) t+=`  All confirmed\n`;
+  else{
+    t+=`  ${'DSP'.padEnd(8)}${'Route'.padEnd(12)}Wave\n`;
+    t+=`  ${'\u2500'.repeat(32)}\n`;
+    d.missUni.forEach(u=>{ t+=`  ${u.dsp.padEnd(8)}${u.route.padEnd(12)}${u.waveTime}\n`; });
+  }
+
+  t+=`\n${'\u2500'.repeat(50)}\n`;
+  t+=`Generated: ${now.toLocaleTimeString('de-DE')} | Developed by @koeabdur\n`;
+
+  // Create and trigger download
+  const blob=new Blob([t],{type:'text/plain;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`DNX3_Yard_Breakdown_${now.toISOString().slice(0,10)}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('\u2b07\ufe0f Report downloaded!');
 }
 
 // ── Import tab ────────────────────────────────────────────────────────────────
