@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, send_from_directory, abort
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
+import requests
 
 # — Config ————————————————————————————————————————————————————————
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +29,31 @@ NOTES_FILE   = os.path.join(BASE_DIR, 'notes.json')
 SCANLOG_FILE = os.path.join(BASE_DIR, 'scanlog.json')
 DATA_JS_FILE = os.path.join(BASE_DIR, 'data.js')
 PORT         = int(os.environ.get('PORT', 8080))
+
+# Slack webhook URL — read from env var, fallback for local dev
+SETTINGS_FILE = os.path.join(BASE_DIR, 'settings.json')
+
+def load_settings():
+    if os.path.isfile(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_settings(s):
+    with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(s, f, indent=2)
+
+def get_slack_webhook(dsp=None):
+    """Get webhook URL. If dsp given, try DSP-specific first, then fall back to default."""
+    settings = load_settings()
+    if dsp:
+        dsp_hooks = settings.get('dsp_webhooks', {})
+        if dsp in dsp_hooks and dsp_hooks[dsp]:
+            return dsp_hooks[dsp]
+    return settings.get('slack_webhook_url') or os.environ.get('SLACK_WEBHOOK_URL', '')
 
 # Passwords — read from environment variables (set in Render dashboard)
 # Fallbacks are for local development only
@@ -132,6 +158,19 @@ def require_role(min_role='associate'):
     if min_role == 'manager' and role != 'manager':
         return None, (jsonify({'error': 'Manager access required'}), 403)
     return role, None
+
+# — Slack helpers ——————————————————————————————————————————————
+
+def send_slack_message(text, dsp=None):
+    """Send a fully formatted message to the Slack webhook."""
+    webhook = get_slack_webhook(dsp=dsp)
+    if not webhook:
+        return False
+    try:
+        resp = requests.post(webhook, json={"Content": text}, timeout=10)
+        return resp.status_code == 200
+    except Exception:
+        return False
 
 # — Static files ————————————————————————————————————————————————
 
@@ -342,7 +381,123 @@ def import_data():
     socketio.emit('data_reloaded', {})
     return jsonify({'ok': True})
 
+# — Slack endpoints ————————————————————————————————————————————
+
+@app.route('/api/slack_late', methods=['POST'])
+def slack_late():
+    """Send a late tour alert to Slack."""
+    role, err = require_role('manager')
+    if err: return err
+    body = request.get_json(silent=True) or {}
+    route = body.get('route', '')
+    wave_time = body.get('waveTime', '')
+    dsp = body.get('dsp', '')
+    staging = body.get('staging', '')
+    if not route:
+        return jsonify({'error': 'Missing route'}), 400
+    msg = (
+        f":warning: *Late Tour Alert \u2014 DNX3*\n\n"
+        f"Lieber DSP,\n\n"
+        f"wir m\u00f6chten dich darauf hinweisen, dass deine Tour nicht rechtzeitig zur geplanten Welle eingetroffen ist. "
+        f"Gem\u00e4\u00df unseren Vereinbarungen werden wir die Tour an einen alternativen DSP vergeben, "
+        f"sollte die Abholung nicht innerhalb von 30 Minuten nach der geplanten Ankunftszeit erfolgen.\n\n"
+        f"Bitte stelle sicher, dass deine Fahrer zuk\u00fcnftig p\u00fcnktlich zum vereinbarten Zeitpunkt eintreffen.\n"
+        f"Bei Fragen oder Problemen kontaktiere uns bitte umgehend.\n\n"
+        f"Viele Gr\u00fc\u00dfe\n\n"
+        f"DSP: {dsp}\n"
+        f"Route: {route}\n"
+        f"Wave: {wave_time}"
+    )
+    success = send_slack_message(msg, dsp=dsp)
+    if success:
+        return jsonify({'ok': True})
+    else:
+        return jsonify({'error': 'Slack webhook failed or disabled'}), 500
+
+@app.route('/api/slack_report', methods=['POST'])
+def slack_report():
+    """Send the full report text to Slack."""
+    role, err = require_role('manager')
+    if err: return err
+    body = request.get_json(silent=True) or {}
+    report_text = body.get('text', '')
+    title = body.get('title', '')
+    if not report_text:
+        return jsonify({'error': 'Missing report text'}), 400
+    msg = f"{title}\n```\n{report_text}\n```"
+    success = send_slack_message(msg)
+    if success:
+        return jsonify({'ok': True})
+    else:
+        return jsonify({'error': 'Slack webhook failed or disabled'}), 500
+
 # — SocketIO —————————————————————————————————————————————————————
+
+
+# —— Clear data endpoint (manager only) ————————————————————————————————
+
+@app.route('/api/clear_data', methods=['POST'])
+def clear_data():
+    """Clear all sequencing data — resets waves, state, notes, scanlog."""
+    role, err = require_role('manager')
+    if err: return err
+    # Write empty WAVES to data.js
+    empty_data = "// Cleared — no sequencing data\nconst WAVES = [];\n"
+    with open(DATA_JS_FILE, 'w', encoding='utf-8') as f:
+        f.write(empty_data)
+    # Reset state
+    save_state({})
+    # Clear notes and scanlog
+    notes_file = os.path.join(BASE_DIR, 'notes.json')
+    scanlog_file = os.path.join(BASE_DIR, 'scanlog.json')
+    if os.path.isfile(notes_file):
+        with open(notes_file, 'w', encoding='utf-8') as f:
+            json.dump({}, f)
+    if os.path.isfile(scanlog_file):
+        with open(scanlog_file, 'w', encoding='utf-8') as f:
+            json.dump([], f)
+    socketio.emit('data_reloaded', {})
+    return jsonify({'ok': True})
+
+# —— Settings endpoints (manager only) ————————————————————————————————
+
+@app.route('/api/settings', methods=['GET', 'POST'])
+def handle_settings():
+    role, err = require_role('manager')
+    if err: return err
+    if request.method == 'GET':
+        return jsonify(load_settings())
+    body = request.get_json(silent=True) or {}
+    settings = load_settings()
+    if 'slack_webhook_url' in body:
+        settings['slack_webhook_url'] = body['slack_webhook_url'].strip()
+    if 'dsp_webhooks' in body:
+        settings['dsp_webhooks'] = body['dsp_webhooks']
+    save_settings(settings)
+    return jsonify({'ok': True})
+
+@app.route('/api/test_slack', methods=['POST'])
+def test_slack():
+    """Send a test message to verify the webhook works."""
+    role, err = require_role('manager')
+    if err: return err
+    body = request.get_json(silent=True) or {}
+    target = body.get('target', 'default')
+    if target == 'default':
+        webhook = get_slack_webhook()
+    else:
+        webhook = get_slack_webhook(dsp=target)
+    if not webhook:
+        return jsonify({'error': 'No Slack webhook URL configured'}), 400
+    try:
+        label = f'DSP: {target}' if target != 'default' else 'Default channel'
+        r = requests.post(webhook, json={'text': f'✅ DNX3 Wave Tracker — Test successful! ({label})'}, timeout=5)
+        if r.status_code == 200:
+            return jsonify({'ok': True})
+        else:
+            return jsonify({'error': f'Slack returned status {r.status_code}'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @socketio.on('connect')
 def on_connect():

@@ -17,6 +17,13 @@ let dark        = localStorage.getItem('dnx3_dk') === '1';
 let socket      = null;
 let notePanel   = {open:false, route:''};
 
+// Slack late alert tracking — avoid duplicate alerts per route
+const slackAlerted = new Set();
+
+// Editable report state
+let rptEdits = { late: '', otd: '', uniform: '', reportNotes: '' };
+let rptEditMode = { late: false, otd: false, uniform: false };
+
 if (dark) document.body.classList.add('dark');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -60,7 +67,8 @@ function wMin(s) {
   if(ap==='PM'&&h!==12)h+=12; if(ap==='AM'&&h===12)h=0;
   return h*60+mn;
 }
-function isLate(wi){ const n=new Date(); return(n.getHours()*60+n.getMinutes())>wMin(WAVES[wi].time)+5; }
+// Change #1: Remove 5-min grace — lateness = exact wave time
+function isLate(wi){ const n=new Date(); return(n.getHours()*60+n.getMinutes())>wMin(WAVES[wi].time); }
 
 // ── Clock ─────────────────────────────────────────────────────────────────────
 function updateClock(){ document.getElementById('clock').textContent=new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
@@ -85,6 +93,26 @@ function showToast(m){
 const ts=document.createElement('style');
 ts.textContent='#toast.show{transform:translateX(-50%) translateY(0)!important;}';
 document.head.appendChild(ts);
+
+// Webhook settings styles
+const whStyles=document.createElement('style');
+whStyles.textContent=`
+.wh-label{font-size:.75rem;font-weight:600;color:var(--subtext);display:block;margin-bottom:6px;}
+.wh-hint{font-size:.68rem;color:var(--subtext);}
+.wh-main-input{width:100%;max-width:600px;padding:10px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:.82rem;background:var(--surface2);color:var(--text);outline:none;font-family:monospace;margin-bottom:6px;}
+.wh-main-input:focus{border-color:#3b82f6;}
+.wh-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;padding:6px 10px;background:var(--surface2);border-radius:7px;border:1px solid var(--border);}
+.wh-dsp{font-size:.75rem;font-weight:700;color:var(--text);min-width:50px;}
+.wh-input{flex:1;max-width:500px;padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:.78rem;background:var(--surface2);color:var(--text);outline:none;font-family:monospace;}
+.wh-input:focus{border-color:#3b82f6;}
+.wh-rm{background:none;border:none;color:var(--red);font-size:1.1rem;cursor:pointer;padding:2px 6px;border-radius:4px;}
+.wh-rm:hover{background:var(--red-bg);}
+.wh-add-row{display:flex;align-items:center;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);flex-wrap:wrap;}
+.wh-select{padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:.78rem;background:var(--surface2);color:var(--text);outline:none;min-width:100px;}
+.wh-empty{font-size:.75rem;color:var(--subtext);font-style:italic;padding:8px 0;}
+`;
+document.head.appendChild(whStyles);
+
 
 // ── Login ─────────────────────────────────────────────────────────────────────
 async function doLogin(){
@@ -133,6 +161,7 @@ async function bootApp(){
   if(ROLE==='manager'){
     document.getElementById('tb-r').style.display='';
     document.getElementById('tb-i').style.display='';
+    document.getElementById('tb-s').style.display='';
   }
 
   // Wave open state: first open, rest closed
@@ -154,6 +183,13 @@ async function bootApp(){
   }
 
   render();
+
+  // Change #2: Start Slack late alert interval (manager only)
+  if(ROLE==='manager'){
+    setInterval(checkSlackLateAlerts, 30000);
+    // Run once immediately after boot
+    setTimeout(checkSlackLateAlerts, 5000);
+  }
 }
 
 function showLoginScreen(){
@@ -226,6 +262,32 @@ async function apiRemoveScanlog(route){
   }catch(e){showToast('⚠️ Sync error');}
 }
 
+// ── Slack Late Alert Check (Change #2) ────────────────────────────────────────
+async function checkSlackLateAlerts(){
+  if(ROLE!=='manager')return;
+  const now=new Date();
+  const nowMin=now.getHours()*60+now.getMinutes();
+  WAVES.forEach((w,i)=>{
+    const waveMinutes=wMin(w.time);
+    if(waveMinutes===9999)return;
+    // Only trigger if current time has passed the wave time
+    if(nowMin<=waveMinutes+1)return; // alert 1 min after wave time
+    const allRoutes=[...effGreen(w),...effRed(w)];
+    allRoutes.forEach(r=>{
+      if(isIn(i,r.route))return; // already checked in
+      const key=`${i}_${r.route}`;
+      if(slackAlerted.has(key))return; // already alerted
+      slackAlerted.add(key);
+      // Fire and forget — send alert to server
+      fetch('/api/slack_late',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-Token':TOKEN},
+        body:JSON.stringify({route:r.route,waveTime:w.time,dsp:r.dsp,staging:r.staging})
+      }).catch(()=>{});
+    });
+  });
+}
+
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 function connectSocket(){
   socket=io({auth:{token:TOKEN}});
@@ -288,21 +350,31 @@ function connectSocket(){
   });
 }
 
-// ── Search ────────────────────────────────────────────────────────────────────
+// ── Search (Change #5: clear on blur) ─────────────────────────────────────────
 function onSearch(){ searchQ=expandSearch(document.getElementById('si').value); renderMain(); }
 document.addEventListener('keydown',e=>{
   if(e.key==='/'&&document.activeElement!==document.getElementById('si')){e.preventDefault();document.getElementById('si').focus();}
   if(e.key==='Escape'){document.getElementById('si').value='';searchQ='';renderMain();closeNotePanel();}
 });
 
+// ── clearSearch helper (replaces old blur-to-clear) ──────────────────────────
+function clearSearch(){
+  const si=document.getElementById('si');
+  if(si) si.value='';
+  searchQ='';
+  render();
+}
+
 // ── Tab switch ────────────────────────────────────────────────────────────────
 function switchTab(t){
   document.getElementById('tv').style.display=t==='t'?'flex':'none';
   const rv=document.getElementById('rv'); rv.style.display=t==='r'?'block':'none';
   const iv=document.getElementById('iv'); iv.style.display=t==='i'?'block':'none';
-  ['t','r','i'].forEach(id=>document.getElementById('tb-'+id)?.classList.toggle('active',id===t));
+  const sv=document.getElementById('sv'); if(sv) sv.style.display=t==='s'?'block':'none';
+  ['t','r','i','s'].forEach(id=>document.getElementById('tb-'+id)?.classList.toggle('active',id===t));
   if(t==='r')renderReport();
   if(t==='i')renderImport();
+  if(t==='s')renderSettings();
 }
 
 // ── Note Panel ────────────────────────────────────────────────────────────────
@@ -311,9 +383,11 @@ function openNotePanel(route){
   const panel=document.getElementById('note-panel');
   const currentText=getNoteText(route);
   const currentOtd=getNoteOtd(route);
+  // Change #6: OTD checkbox only for managers, but OTD badge visible to all
+  const otdRow = ROLE==='manager' ? `<div class="np-otd-row"><label class="np-otd-label"><input type="checkbox" id="note-otd" class="np-otd-cb" ${currentOtd?'checked':''}/>  <span class="np-otd-text">🎯 Mark as OTD Hit</span></label></div>` : '';
   panel.innerHTML=`<div class="np-header"><span class="np-title">📝 ${route}</span><button class="np-close" onclick="closeNotePanel()">✕</button></div>
     <textarea id="note-ta" class="np-textarea" placeholder="Add notes for ${route}...">${currentText}</textarea>
-    <div class="np-otd-row"><label class="np-otd-label"><input type="checkbox" id="note-otd" class="np-otd-cb" ${currentOtd?'checked':''}/>  <span class="np-otd-text">🎯 Mark as OTD Hit</span></label></div>
+    ${otdRow}
     <div class="np-actions"><button class="rabtn pri" onclick="saveNote()">💾 Save</button><button class="rabtn" onclick="closeNotePanel()">Close</button></div>`;
   panel.classList.add('open');
 }
@@ -490,6 +564,17 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .rabtn.pri{background:#1e2d3d;color:#fff;border-color:#1e2d3d;}.rabtn.pri:hover{background:#2d3f54;}
 .dark .rabtn.pri{background:#3b82f6;border-color:#3b82f6;}
 .empty-sec{padding:13px 14px;color:var(--subtext);font-size:.8rem;}
+/* Report edit areas (Change #4) */
+.rpt-edit-toggle{display:inline-flex;align-items:center;gap:4px;margin-left:auto;padding:3px 9px;border-radius:5px;border:1px solid var(--border);background:var(--surface2);color:var(--subtext);cursor:pointer;font-size:.65rem;font-weight:600;transition:background .15s;}
+.rpt-edit-toggle:hover{background:var(--border);}
+.rpt-edit-toggle.active{background:#dbeafe;border-color:#3b82f6;color:#1d4ed8;}
+.dark .rpt-edit-toggle.active{background:#1e3a5f;border-color:#3b82f6;color:#93c5fd;}
+.rpt-edit-area{margin:10px 14px;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:.78rem;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;min-height:60px;outline:none;width:calc(100% - 28px);}
+.rpt-edit-area:focus{border-color:#3b82f6;}
+.rpt-notes-sec{background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:13px;overflow:hidden;}
+.rpt-notes-title{font-size:.71rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--subtext);padding:10px 14px 8px;border-bottom:1px solid var(--border);}
+.rpt-notes-area{margin:10px 14px 14px;padding:12px;border:1px solid var(--border);border-radius:8px;font-size:.8rem;font-family:inherit;background:var(--bg);color:var(--text);resize:vertical;min-height:80px;outline:none;width:calc(100% - 28px);}
+.rpt-notes-area:focus{border-color:#3b82f6;}
 /* Import */
 .import-wrap{max-width:640px;}
 .import-title{font-size:1.1rem;font-weight:700;margin-bottom:4px;}
@@ -516,6 +601,7 @@ function cardHtml(wi,r,color){
   const match=!q||r.route.toLowerCase()===q||r.dsp.toLowerCase()===q||r.staging.toLowerCase()===q;
   const hasN=hasNote(r.route);
   const isOtd=getNoteOtd(r.route);
+  // Change #6: OTD badge (🎯) visible to both roles
   return`<div class="rcard ${eff}${chk?' checked':''}${q&&!match?' dimmed':''}" data-wi="${wi}" data-r="${r.route}">
     <div class="ck">✓</div>
     ${isOtd?'<span class="otd-badge">🎯</span>':''}
@@ -544,7 +630,7 @@ function bindCards(c){
         await apiCheckin(wi,ro,true,t);
         if(inCount(wi)===WAVES[wi].total){setTimeout(()=>{playDing();showToast(`🎉 Wave ${WAVES[wi].time} — all in!`);},350);}
       }
-      render();
+      clearSearch();
     });
   });
   c.querySelectorAll('[data-action="u"]').forEach(btn=>{
@@ -561,13 +647,14 @@ function bindCards(c){
       state[String(wi)][ro].uniform=newVal;
       showToast(newVal?`👕 Uniform ✓ — ${ro}`:`👕 Uniform removed — ${ro}`);
       await apiUniform(wi,ro,newVal);
-      render();
+      clearSearch();
     });
   });
   c.querySelectorAll('[data-action="note"]').forEach(btn=>{
     btn.addEventListener('click',e=>{
       e.stopPropagation();
       openNotePanel(btn.dataset.r);
+      clearSearch();
     });
   });
 }
@@ -625,12 +712,11 @@ function getReportData(){
   let tot=0,tin=0,tuni=0;
   WAVES.forEach((w,i)=>{tot+=w.total;tin+=inCount(i);tuni+=uniCount(i);});
 
-  // Late arrivals: routes checked in >5 min after wave time
+  // Change #1: Late arrivals — routes checked in AFTER wave time (no grace)
   const lateArrivals=[];
   WAVES.forEach((w,i)=>{
     const waveMinutes=wMin(w.time);
     if(waveMinutes===9999)return;
-    const grace=waveMinutes+5;
     allR(w).forEach(r=>{
       if(!isIn(i,r.route))return;
       const checkinStr=inTime(i,r.route);
@@ -638,8 +724,8 @@ function getReportData(){
       const parts=checkinStr.match(/^(\d{1,2}):(\d{2})$/);
       if(!parts)return;
       const checkinMin=parseInt(parts[1])*60+parseInt(parts[2]);
-      if(checkinMin>grace){
-        lateArrivals.push({waveTime:w.time,route:r.route,dsp:r.dsp,staging:r.staging,checkinTime:checkinStr,delay:checkinMin-waveMinutes});
+      if(checkinMin>waveMinutes){
+        lateArrivals.push({waveIdx:i,waveTime:w.time,route:r.route,dsp:r.dsp,staging:r.staging,checkinTime:checkinStr,delay:checkinMin-waveMinutes});
       }
     });
   });
@@ -650,7 +736,7 @@ function getReportData(){
   WAVES.forEach((w,i)=>{
     allR(w).forEach(r=>{
       if(getNoteOtd(r.route)){
-        otdHits.push({waveTime:w.time,route:r.route,dsp:r.dsp,checkinTime:inTime(i,r.route)||'—',noteText:getNoteText(r.route)});
+        otdHits.push({waveIdx:i,waveTime:w.time,route:r.route,dsp:r.dsp,checkinTime:inTime(i,r.route)||'—',noteText:getNoteText(r.route)});
       }
     });
   });
@@ -666,22 +752,21 @@ function getReportData(){
   // Uniform compliance %
   const uniPct=tin>0?Math.round(tuni/tin*100):0;
 
-  // Expected OTD %
-  const otdPct=tot>0?Math.round(otdHits.length/tot*100):0;
+  // Change #7: Fix Expected OTD = (Total - OTD Hits) / Total × 100, rounded to 2 decimal places
+  const otdPct=tot>0?Math.round(((tot-otdHits.length)/tot*100)*100)/100:100;
 
-  // Wave breakdown with late/otd per wave
+  // Wave breakdown with late/otd per wave (no grace)
   const waveBreakdown=WAVES.map((w,i)=>{
     const waveMinutes=wMin(w.time);
     let wLate=0;
     if(waveMinutes!==9999){
-      const grace=waveMinutes+5;
       allR(w).forEach(r=>{
         if(!isIn(i,r.route))return;
         const ct=inTime(i,r.route);
         if(!ct)return;
         const p=ct.match(/^(\d{1,2}):(\d{2})$/);
         if(!p)return;
-        if(parseInt(p[1])*60+parseInt(p[2])>grace)wLate++;
+        if(parseInt(p[1])*60+parseInt(p[2])>waveMinutes)wLate++;
       });
     }
     let wOtd=0;
@@ -689,11 +774,10 @@ function getReportData(){
     return {time:w.time,total:w.total,late:wLate,otd:wOtd};
   });
 
-  // DSP breakdown with late/otd/uniform
+  // DSP breakdown with late/otd/uniform (no grace)
   const dspMap={};
   WAVES.forEach((w,i)=>{
     const waveMinutes=wMin(w.time);
-    const grace=waveMinutes!==9999?waveMinutes+5:99999;
     allR(w).forEach(r=>{
       if(!dspMap[r.dsp])dspMap[r.dsp]={total:0,late:0,otd:0,uniformIn:0,checkedIn:0};
       dspMap[r.dsp].total++;
@@ -703,7 +787,7 @@ function getReportData(){
         const ct=inTime(i,r.route);
         if(ct&&waveMinutes!==9999){
           const p=ct.match(/^(\d{1,2}):(\d{2})$/);
-          if(p&&parseInt(p[1])*60+parseInt(p[2])>grace)dspMap[r.dsp].late++;
+          if(p&&parseInt(p[1])*60+parseInt(p[2])>waveMinutes)dspMap[r.dsp].late++;
         }
       }
       if(getNoteOtd(r.route))dspMap[r.dsp].otd++;
@@ -718,6 +802,9 @@ function renderReport(){
   const now=new Date();
   const d=getReportData();
 
+  // Change #4: edit toggle buttons for collapsible sections
+  const editBtnHtml=(key)=>ROLE==='manager'?`<button class="rpt-edit-toggle${rptEditMode[key]?' active':''}" onclick="event.stopPropagation();toggleRptEdit('${key}')">${rptEditMode[key]?'✓ Done':'✏️ Edit'}</button>`:'';
+
   rv.innerHTML=`<div class="rpt-title">📋 End of Day Yard Breakdown</div>
   <div class="rpt-sub">DNX3 · ${now.toLocaleDateString('en-GB',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})}</div>
 
@@ -727,7 +814,7 @@ function renderReport(){
     <div class="sstat"><div class="sval sv-red">${d.lateArrivals.length}</div><div class="slbl">Late Entries</div></div>
     <div class="sstat"><div class="sval sv-amber">${d.otdHits.length}</div><div class="slbl">OTD Hits</div></div>
     <div class="sstat"><div class="sval sv-green">${d.uniPct}%</div><div class="slbl">Uniform Compliance</div></div>
-    <div class="sstat"><div class="sval ${d.otdPct>=80?'sv-green':d.otdPct>=50?'sv-amber':'sv-red'}">${d.otdPct}%</div><div class="slbl">Expected OTD</div></div>
+    <div class="sstat"><div class="sval ${d.otdPct>=98?'sv-green':d.otdPct>=95?'sv-amber':'sv-red'}">${d.otdPct}%</div><div class="slbl">Expected OTD</div></div>
   </div></div>
 
   <!-- Wave Breakdown -->
@@ -745,29 +832,47 @@ function renderReport(){
     }).join('')}</tbody>
   </table></div>
 
-  <!-- Late Arrivals (collapsible) -->
-  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.late?' open':''}" onclick="toggleRptSec('late')"><span class="coll-chev">▶</span> ⏰ Late Arrivals (${d.lateArrivals.length})</div>
+  <!-- Late Arrivals (collapsible + editable) -->
+  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.late?' open':''}" onclick="toggleRptSec('late')"><span class="coll-chev">▶</span> ⏰ Late Arrivals (${d.lateArrivals.length}) ${editBtnHtml('late')}</div>
   <div class="rsec-body${rptCollapse.late?' open':''}" id="rpt-late">${d.lateArrivals.length===0?'<div class="empty-sec">✅ No late arrivals!</div>':`<table class="rtbl">
-    <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th></tr></thead>
-    <tbody>${d.lateArrivals.map(l=>`<tr><td>${l.waveTime}</td><td><strong>${l.route}</strong></td><td>${l.dsp}</td><td><span style="color:#dc2626;font-weight:600">${l.checkinTime}</span> <span style="color:var(--subtext);font-size:.65rem">(+${l.delay}min)</span></td></tr>`).join('')}</tbody>
-  </table>`}</div></div>
+    <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th><th>Edit Time</th><th></th></tr></thead>
+    <tbody>${d.lateArrivals.map(l=>`<tr><td>${l.waveTime}</td><td><strong>${l.route}</strong></td><td>${l.dsp}</td><td><span style="color:#dc2626;font-weight:600">${l.checkinTime}</span> <span style="color:var(--subtext);font-size:.65rem">(+${l.delay}min)</span></td><td><input type="time" class="rpt-time-input" value="${l.checkinTime}" onchange="rptEditLateTime(${l.waveIdx},'${l.route}',this.value)"></td><td><button class="rpt-x-btn" onclick="rptUncheckLate(${l.waveIdx},'${l.route}','${l.waveTime}')" title="Remove (set on-time)">✕</button></td></tr>`).join('')}</tbody>
+  </table>`}${rptEditMode.late?`<textarea class="rpt-edit-area" id="rpt-edit-late" placeholder="Add annotations for late arrivals..." oninput="rptEdits.late=this.value">${rptEdits.late}</textarea>`:''}</div></div>
 
-  <!-- OTD Hits (collapsible) -->
-  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.otd?' open':''}" onclick="toggleRptSec('otd')"><span class="coll-chev">▶</span> 🎯 OTD Hits (${d.otdHits.length})</div>
+  <!-- OTD Hits (collapsible + editable) -->
+  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.otd?' open':''}" onclick="toggleRptSec('otd')"><span class="coll-chev">▶</span> 🎯 OTD Hits (${d.otdHits.length}) ${editBtnHtml('otd')}</div>
   <div class="rsec-body${rptCollapse.otd?' open':''}" id="rpt-otd">${d.otdHits.length===0?'<div class="empty-sec">No OTD hits marked yet.</div>':`<table class="rtbl">
-    <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th><th>Notes Taken</th></tr></thead>
-    <tbody>${d.otdHits.map(o=>`<tr><td>${o.waveTime}</td><td><strong>${o.route}</strong></td><td>${o.dsp}</td><td>${o.checkinTime}</td><td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${o.noteText||'—'}</td></tr>`).join('')}</tbody>
-  </table>`}</div></div>
+    <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th><th>Reason</th><th></th></tr></thead>
+    <tbody>${d.otdHits.map(o=>`<tr><td>${o.waveTime}</td><td><strong>${o.route}</strong></td><td>${o.dsp}</td><td>${o.checkinTime}</td><td><input type="text" class="rpt-reason-input" value="${(o.noteText||'').replace(/"/g,'&quot;')}" placeholder="Add reason..." onchange="rptEditOtdReason('${o.route}',this.value)"></td><td><button class="rpt-x-btn" onclick="rptUncheckOtd('${o.route}')" title="Remove OTD">✕</button></td></tr>`).join('')}</tbody>
+  </table>`}${rptEditMode.otd?`<textarea class="rpt-edit-area" id="rpt-edit-otd" placeholder="Add annotations for OTD hits..." oninput="rptEdits.otd=this.value">${rptEdits.otd}</textarea>`:''}</div></div>
 
-  <!-- Missing Uniform (collapsible) -->
-  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.uniform?' open':''}" onclick="toggleRptSec('uniform')"><span class="coll-chev">▶</span> 👕 Missing Uniform (${d.missUni.length})</div>
+  <!-- Missing Uniform (collapsible + editable) -->
+  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.uniform?' open':''}" onclick="toggleRptSec('uniform')"><span class="coll-chev">▶</span> 👕 Missing Uniform (${d.missUni.length}) ${editBtnHtml('uniform')}</div>
   <div class="rsec-body${rptCollapse.uniform?' open':''}" id="rpt-uniform">${d.missUni.length===0?'<div class="empty-sec">✅ All checked-in drivers had uniform confirmed!</div>':`<table class="rtbl">
     <thead><tr><th>DSP</th><th>Route</th><th>Wave Time</th></tr></thead>
     <tbody>${d.missUni.map(u=>`<tr><td><strong>${u.dsp}</strong></td><td>${u.route}</td><td>${u.waveTime}</td></tr>`).join('')}</tbody>
-  </table>`}</div></div>
+  </table>`}${rptEditMode.uniform?`<textarea class="rpt-edit-area" id="rpt-edit-uniform" placeholder="Add annotations for uniform issues..." oninput="rptEdits.uniform=this.value">${rptEdits.uniform}</textarea>`:''}</div></div>
+
+  <!-- Change #4: Report Notes textarea (manager-only) -->
+  ${ROLE==='manager'?`<div class="rpt-notes-sec">
+    <div class="rpt-notes-title">📝 Report Notes</div>
+    <textarea class="rpt-notes-area" id="rpt-notes-area" placeholder="Add general report notes, comments, or context..." oninput="rptEdits.reportNotes=this.value">${rptEdits.reportNotes}</textarea>
+  </div>`:''}
 
   <!-- Actions -->
-  <div class="rsec"><div class="ractions"><button class="rabtn pri" onclick="downloadRpt()">⬇️ Download</button><button class="rabtn" onclick="copyRpt()">📋 Copy</button></div></div>`;
+  <div class="rsec"><div class="ractions">
+    <button class="rabtn pri" onclick="downloadRpt()">⬇️ Download</button>
+    <button class="rabtn" onclick="copyRpt()">📋 Copy</button>
+    ${ROLE==='manager'?'<button class="rabtn" onclick="submitRptToSlack()">📤 Submit to Slack</button>':''}
+    ${ROLE==='manager'?'<button class="rabtn" onclick="exportDayData()">💾 Export Day Data</button>':''}
+  </div></div>`;
+}
+
+// Change #4: Toggle edit mode for report sections
+function toggleRptEdit(key){
+  rptEditMode[key]=!rptEditMode[key];
+  // If closing edit mode, keep the text
+  renderReport();
 }
 
 function toggleRptSec(key){
@@ -775,45 +880,56 @@ function toggleRptSec(key){
   renderReport();
 }
 
-function copyRpt(){
-  const d=getReportData();
-  let t=`DNX3 End of Day Yard Breakdown\n${'─'.repeat(45)}\n\n`;
-  t+=`OVERVIEW SUMMARY\n`;
-  t+=`  Total Routes: ${d.tot}\n`;
-  t+=`  Late Entries: ${d.lateArrivals.length}\n`;
-  t+=`  OTD Hits: ${d.otdHits.length}\n`;
-  t+=`  Uniform Compliance: ${d.uniPct}%\n`;
-  t+=`  Expected OTD: ${d.otdPct}%\n\n`;
-
-  t+=`WAVE BREAKDOWN\n`;
-  d.waveBreakdown.forEach(w=>{
-    t+=`  ${w.time}: ${w.total} routes | ${w.late} late | ${w.otd} OTD\n`;
-  });
-
-  t+=`\nDSP PERFORMANCE\n`;
-  Object.entries(d.dspMap).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([name,v])=>{
-    const up=v.checkedIn>0?Math.round(v.uniformIn/v.checkedIn*100):0;
-    t+=`  ${name}: ${v.total} routes | ${v.late} late | ${v.otd} OTD | Uniform ${up}%\n`;
-  });
-
-  t+=`\nLATE ARRIVALS (${d.lateArrivals.length})\n`;
-  if(d.lateArrivals.length===0) t+=`  ✅ None\n`;
-  else d.lateArrivals.forEach(l=>{ t+=`  ${l.waveTime} | ${l.route} | ${l.dsp} | ${l.checkinTime} (+${l.delay}min)\n`; });
-
-  t+=`\nOTD HITS (${d.otdHits.length})\n`;
-  if(d.otdHits.length===0) t+=`  None marked\n`;
-  else d.otdHits.forEach(o=>{ t+=`  ${o.waveTime} | ${o.route} | ${o.dsp} | ${o.checkinTime} | ${o.noteText||'—'}\n`; });
-
-  t+=`\nMISSING UNIFORM (${d.missUni.length})\n`;
-  if(d.missUni.length===0) t+=`  ✅ All confirmed\n`;
-  else d.missUni.forEach(u=>{ t+=`  ${u.dsp} | ${u.route} | ${u.waveTime}\n`; });
-
-  navigator.clipboard.writeText(t).then(()=>showToast('📋 Copied!'));
+// ── Report: Edit late time ───────────────────────────────────────────────────
+async function rptEditLateTime(waveIdx,route,newTime){
+  if(!newTime)return;
+  const wi=String(waveIdx);
+  if(!state[wi])state[wi]={};
+  if(!state[wi][route])state[wi][route]={time:newTime,uniform:false};
+  else state[wi][route].time=newTime;
+  await apiCheckin(waveIdx,route,true,newTime);
+  renderReport();
 }
 
+// ── Report: Uncheck late (set time = wave time to make on-time) ──────────────
+async function rptUncheckLate(waveIdx,route,waveTime){
+  // Convert wave time (e.g. "7:30 AM") to 24h "HH:MM"
+  const m=waveTime.match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if(!m)return;
+  let h=+m[1],mn=+m[2],ap=m[3].toUpperCase();
+  if(ap==='PM'&&h!==12)h+=12; if(ap==='AM'&&h===12)h=0;
+  const onTime=String(h).padStart(2,'0')+':'+String(mn).padStart(2,'0');
+  const wi=String(waveIdx);
+  if(!state[wi])state[wi]={};
+  if(!state[wi][route])state[wi][route]={time:onTime,uniform:false};
+  else state[wi][route].time=onTime;
+  await apiCheckin(waveIdx,route,true,onTime);
+  showToast(`⏰ ${route} set on-time (${onTime})`);
+  renderReport();
+}
 
+// ── Report: Edit OTD reason ──────────────────────────────────────────────────
+async function rptEditOtdReason(route,reason){
+  const currentOtd=getNoteOtd(route);
+  notes[route]={text:reason,otd:currentOtd};
+  await apiSaveNote(route,reason,currentOtd);
+  renderReport();
+}
 
-function downloadRpt(){
+// ── Report: Uncheck OTD ──────────────────────────────────────────────────────
+async function rptUncheckOtd(route){
+  const currentText=getNoteText(route);
+  if(currentText){
+    notes[route]={text:currentText,otd:false};
+  } else {
+    delete notes[route];
+  }
+  await apiSaveNote(route,currentText,false);
+  showToast(`🎯 OTD removed for ${route}`);
+  renderReport();
+}
+
+function buildReportText(){
   const d=getReportData();
   const now=new Date();
   const dateStr=now.toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'});
@@ -850,14 +966,16 @@ function downloadRpt(){
     t+=`  ${'\u2500'.repeat(44)}\n`;
     d.lateArrivals.forEach(l=>{ t+=`  ${l.waveTime.padEnd(12)}${l.route.padEnd(12)}${l.dsp.padEnd(8)}${l.checkinTime} (+${l.delay}min)\n`; });
   }
+  if(rptEdits.late){ t+=`  Notes: ${rptEdits.late}\n`; }
 
   t+=`\nOTD HITS (${d.otdHits.length})\n`;
   if(d.otdHits.length===0) t+=`  None marked\n`;
   else{
     t+=`  ${'Wave'.padEnd(12)}${'Route'.padEnd(12)}${'DSP'.padEnd(8)}${'Check-in'.padEnd(10)}Notes\n`;
     t+=`  ${'\u2500'.repeat(54)}\n`;
-    d.otdHits.forEach(o=>{ t+=`  ${o.waveTime.padEnd(12)}${o.route.padEnd(12)}${o.dsp.padEnd(8)}${(o.checkinTime||'—').padEnd(10)}${o.noteText||'—'}\n`; });
+    d.otdHits.forEach(o=>{ t+=`  ${o.waveTime.padEnd(12)}${o.route.padEnd(12)}${o.dsp.padEnd(8)}${(o.checkinTime||'\u2014').padEnd(10)}${o.noteText||'\u2014'}\n`; });
   }
+  if(rptEdits.otd){ t+=`  Notes: ${rptEdits.otd}\n`; }
 
   t+=`\nMISSING UNIFORM (${d.missUni.length})\n`;
   if(d.missUni.length===0) t+=`  All confirmed\n`;
@@ -866,10 +984,65 @@ function downloadRpt(){
     t+=`  ${'\u2500'.repeat(32)}\n`;
     d.missUni.forEach(u=>{ t+=`  ${u.dsp.padEnd(8)}${u.route.padEnd(12)}${u.waveTime}\n`; });
   }
+  if(rptEdits.uniform){ t+=`  Notes: ${rptEdits.uniform}\n`; }
+
+  // Include report notes if present
+  if(rptEdits.reportNotes){
+    t+=`\nREPORT NOTES\n`;
+    t+=`  ${rptEdits.reportNotes}\n`;
+  }
 
   t+=`\n${'\u2500'.repeat(50)}\n`;
   t+=`Generated: ${now.toLocaleTimeString('de-DE')} | Developed by @koeabdur\n`;
+  return t;
+}
 
+function copyRpt(){
+  const d=getReportData();
+  let t=`DNX3 End of Day Yard Breakdown\n${'─'.repeat(45)}\n\n`;
+  t+=`OVERVIEW SUMMARY\n`;
+  t+=`  Total Routes: ${d.tot}\n`;
+  t+=`  Late Entries: ${d.lateArrivals.length}\n`;
+  t+=`  OTD Hits: ${d.otdHits.length}\n`;
+  t+=`  Uniform Compliance: ${d.uniPct}%\n`;
+  t+=`  Expected OTD: ${d.otdPct}%\n\n`;
+
+  t+=`WAVE BREAKDOWN\n`;
+  d.waveBreakdown.forEach(w=>{
+    t+=`  ${w.time}: ${w.total} routes | ${w.late} late | ${w.otd} OTD\n`;
+  });
+
+  t+=`\nDSP PERFORMANCE\n`;
+  Object.entries(d.dspMap).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([name,v])=>{
+    const up=v.checkedIn>0?Math.round(v.uniformIn/v.checkedIn*100):0;
+    t+=`  ${name}: ${v.total} routes | ${v.late} late | ${v.otd} OTD | Uniform ${up}%\n`;
+  });
+
+  t+=`\nLATE ARRIVALS (${d.lateArrivals.length})\n`;
+  if(d.lateArrivals.length===0) t+=`  ✅ None\n`;
+  else d.lateArrivals.forEach(l=>{ t+=`  ${l.waveTime} | ${l.route} | ${l.dsp} | ${l.checkinTime} (+${l.delay}min)\n`; });
+  if(rptEdits.late) t+=`  Notes: ${rptEdits.late}\n`;
+
+  t+=`\nOTD HITS (${d.otdHits.length})\n`;
+  if(d.otdHits.length===0) t+=`  None marked\n`;
+  else d.otdHits.forEach(o=>{ t+=`  ${o.waveTime} | ${o.route} | ${o.dsp} | ${o.checkinTime} | ${o.noteText||'—'}\n`; });
+  if(rptEdits.otd) t+=`  Notes: ${rptEdits.otd}\n`;
+
+  t+=`\nMISSING UNIFORM (${d.missUni.length})\n`;
+  if(d.missUni.length===0) t+=`  ✅ All confirmed\n`;
+  else d.missUni.forEach(u=>{ t+=`  ${u.dsp} | ${u.route} | ${u.waveTime}\n`; });
+  if(rptEdits.uniform) t+=`  Notes: ${rptEdits.uniform}\n`;
+
+  if(rptEdits.reportNotes) t+=`\nREPORT NOTES\n  ${rptEdits.reportNotes}\n`;
+
+  navigator.clipboard.writeText(t).then(()=>showToast('📋 Copied!'));
+}
+
+
+
+function downloadRpt(){
+  const t=buildReportText();
+  const now=new Date();
   // Create and trigger download
   const blob=new Blob([t],{type:'text/plain;charset=utf-8'});
   const url=URL.createObjectURL(blob);
@@ -882,6 +1055,238 @@ function downloadRpt(){
   URL.revokeObjectURL(url);
   showToast('\u2b07\ufe0f Report downloaded!');
 }
+
+// Change #3: Submit report to Slack
+async function submitRptToSlack(){
+  const t=buildReportText();
+  const now=new Date();
+  const dateStr=now.toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric'});
+  const title=`📊 Yard Report Cycle_1 — DNX3 — ${dateStr}`;
+  try{
+    const r=await fetch('/api/slack_report',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-Token':TOKEN},
+      body:JSON.stringify({text:t,title})
+    });
+    if(r.ok){
+      showToast('📤 Report sent to Slack!');
+    } else {
+      const d=await r.json();
+      showToast('⚠️ '+(d.error||'Failed to send to Slack'));
+    }
+  }catch(e){
+    showToast('⚠️ Cannot reach server.');
+  }
+}
+
+// Change #8: Export Day Data as JSON
+function exportDayData(){
+  const now=new Date();
+  const data={
+    date:now.toISOString().slice(0,10),
+    waves:WAVES,
+    state:state,
+    notes:notes,
+    scanlog:scanlog
+  };
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`DNX3_DayData_${now.toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('💾 Day data exported!');
+}
+
+
+// ── Settings tab (manager only) ───────────────────────────────────────────────
+async function fetchSettings(){
+  try{
+    const r=await fetch('/api/settings',{headers:{'X-Token':TOKEN}});
+    if(r.ok) return await r.json();
+  }catch(e){}
+  return {};
+}
+
+function renderSettings(){
+  const sv=document.getElementById('sv');
+  if(!sv)return;
+  fetchSettings().then(settings=>{
+    const defaultWH=settings.slack_webhook_url||'';
+    const dspWebhooks=settings.dsp_webhooks||{};
+    
+    // Get all unique DSPs from WAVES data
+    const allDsps=new Set();
+    WAVES.forEach(w=>{[...(w.green||[]),...(w.red||[])].forEach(r=>allDsps.add(r.dsp));});
+    const dspList=[...allDsps].sort();
+    
+    // Build DSP webhook rows
+    let dspRows='';
+    Object.entries(dspWebhooks).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([dsp,url])=>{
+      dspRows+=`<div class="wh-row" data-dsp="${dsp}">
+        <span class="wh-dsp">${dsp}</span>
+        <input type="text" class="wh-input" value="${url}" placeholder="https://hooks.slack.com/services/..." data-dsp="${dsp}"/>
+        <button class="wh-rm" onclick="removeDspWebhook('${dsp}')" title="Remove">&times;</button>
+      </div>`;
+    });
+
+    // DSP options for the dropdown (exclude already-added ones)
+
+
+    sv.innerHTML=`
+      <div class="rpt-title">\u2699\ufe0f Settings</div>
+      <div class="rpt-sub">Manager-only configuration</div>
+
+      <div class="rsec">
+        <div class="rsec-title">Slack Integration</div>
+        <div style="padding:14px 16px;">
+          <label class="wh-label">Default Webhook (Reports & General Alerts)</label>
+          <input type="text" id="settings-webhook" value="${defaultWH}" placeholder="https://hooks.slack.com/services/T.../B.../xxx" class="wh-main-input"/>
+          <div class="wh-hint">Used for daily report submission and fallback for DSPs without a specific webhook.</div>
+          
+          <div style="margin-top:20px;">
+            <label class="wh-label">DSP-Specific Webhooks (Late Tour Alerts)</label>
+            <div class="wh-hint" style="margin-bottom:8px;">Late alerts route to the DSP\u2019s webhook. If none set, uses default above.</div>
+            <div id="dsp-webhook-list">${dspRows||'<div class="wh-empty">No DSP webhooks configured yet.</div>'}</div>
+            <div class="wh-add-row">
+              <input type="text" id="add-dsp-name" class="wh-select" placeholder="DSP name..." style="min-width:80px;"/>
+              <input type="text" id="add-dsp-url" class="wh-input" placeholder="Webhook URL for this DSP..."/>
+              <button class="rabtn" onclick="addDspWebhook()">\u2795 Add</button>
+            </div>
+          </div>
+
+          <div style="margin-top:18px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="rabtn pri" onclick="saveAllWebhooks()">\ud83d\udcbe Save All</button>
+            <button class="rabtn" onclick="testWebhook('default')">\ud83e\uddea Test Default</button>
+            <button class="rabtn" onclick="exportSettings()">\ud83d\udce4 Export Settings</button>
+            <button class="rabtn" onclick="document.getElementById('import-settings-file').click()">\ud83d\udce5 Import Settings</button>
+            <input type="file" id="import-settings-file" accept=".json" style="display:none;" onchange="importSettings(event)"/>
+          </div>
+          <div id="webhook-status" style="margin-top:10px;font-size:.75rem;min-height:20px;"></div>
+        </div>
+      </div>
+
+      <div class="rsec" style="margin-top:16px;">
+        <div class="rsec-title">About</div>
+        <div style="padding:12px 0;font-size:.78rem;color:var(--subtext);">
+          DNX3 Container Wave Tracker<br/>
+          Developed by <strong>@koeabdur</strong><br/>
+          Version 2.1
+        </div>
+      </div>
+    `;
+  });
+}
+
+function addDspWebhook(){
+  const sel=document.getElementById('add-dsp-name');
+  const inp=document.getElementById('add-dsp-url');
+  if(!sel||!inp)return;
+  const dsp=sel.value.trim().toUpperCase();
+  const url=inp.value.trim();
+  if(!dsp){showToast('\u26a0\ufe0f Enter a DSP name');return;}
+  if(!url){showToast('\u26a0\ufe0f Enter a webhook URL');return;}
+  // Save immediately
+  fetchSettings().then(settings=>{
+    if(!settings.dsp_webhooks) settings.dsp_webhooks={};
+    settings.dsp_webhooks[dsp]=url;
+    fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Token':TOKEN},body:JSON.stringify(settings)}).then(r=>{
+      if(r.ok){showToast(`\u2705 Webhook added for ${dsp}`);renderSettings();}
+      else showToast('\u274c Failed to save');
+    });
+  });
+}
+
+function removeDspWebhook(dsp){
+  fetchSettings().then(settings=>{
+    if(settings.dsp_webhooks) delete settings.dsp_webhooks[dsp];
+    fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Token':TOKEN},body:JSON.stringify(settings)}).then(r=>{
+      if(r.ok){showToast(`Removed webhook for ${dsp}`);renderSettings();}
+    });
+  });
+}
+
+async function saveAllWebhooks(){
+  const mainInp=document.getElementById('settings-webhook');
+  const defaultUrl=mainInp?mainInp.value.trim():'';
+  const status=document.getElementById('webhook-status');
+  
+  // Collect DSP webhook values from inputs
+  const dspInputs=document.querySelectorAll('#dsp-webhook-list .wh-input');
+  const dspWebhooks={};
+  dspInputs.forEach(inp=>{
+    const dsp=inp.dataset.dsp;
+    const url=inp.value.trim();
+    if(dsp&&url) dspWebhooks[dsp]=url;
+  });
+
+  try{
+    const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Token':TOKEN},
+      body:JSON.stringify({slack_webhook_url:defaultUrl, dsp_webhooks:dspWebhooks})});
+    if(r.ok){
+      status.innerHTML='<span style="color:var(--green);">\u2705 All webhooks saved!</span>';
+      showToast('\u2699\ufe0f Settings saved');
+    } else {
+      status.innerHTML='<span style="color:var(--red);">\u274c Failed to save</span>';
+    }
+  }catch(e){ status.innerHTML='<span style="color:var(--red);">\u274c Network error</span>'; }
+}
+
+async function testWebhook(target){
+  const status=document.getElementById('webhook-status');
+  status.innerHTML='<span style="color:var(--subtext);">Testing...</span>';
+  try{
+    const r=await fetch('/api/test_slack',{method:'POST',headers:{'Content-Type':'application/json','X-Token':TOKEN},body:JSON.stringify({target})});
+    const d=await r.json();
+    if(r.ok){
+      status.innerHTML='<span style="color:var(--green);">\u2705 Test message sent! Check Slack.</span>';
+    } else {
+      status.innerHTML=`<span style="color:var(--red);">\u274c ${d.error||'Failed'}</span>`;
+    }
+  }catch(e){ status.innerHTML='<span style="color:var(--red);">\u274c Network error</span>'; }
+}
+
+
+
+async function exportSettings(){
+  const settings=await fetchSettings();
+  const blob=new Blob([JSON.stringify(settings,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`DNX3_Settings_${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('\ud83d\udce4 Settings exported!');
+}
+
+function importSettings(evt){
+  const file=evt.target.files[0];
+  if(!file)return;
+  const reader=new FileReader();
+  reader.onload=async function(e){
+    try{
+      const settings=JSON.parse(e.target.result);
+      const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Token':TOKEN},body:JSON.stringify(settings)});
+      if(r.ok){
+        showToast('\ud83d\udce5 Settings imported successfully!');
+        renderSettings();
+      } else {
+        showToast('\u274c Failed to import settings');
+      }
+    }catch(err){
+      showToast('\u274c Invalid settings file');
+    }
+  };
+  reader.readAsText(file);
+  evt.target.value='';
+}
+
 
 // ── Import tab ────────────────────────────────────────────────────────────────
 let parsedWaves=null;
@@ -913,6 +1318,7 @@ function renderImport(){
     <input type="file" id="fi" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this.files[0])"/>
     <div id="preview-area"></div>
     <div class="import-last">Last import: ${last}</div>
+    <div style="margin-top:14px;"><button class="rabtn" style="background:#dc2626;color:#fff;border-color:#dc2626;" onclick="clearSequencing()">🗑️ Clear Sequencing Data</button><span style="font-size:.68rem;color:var(--subtext);margin-left:10px;">Removes all wave data and resets the tracker</span></div>
     ${scanlogHtml}
   </div>`;
   const dz=document.getElementById('dz');
@@ -941,6 +1347,19 @@ async function addScanlogEntry(){
   showToast(`\ud83d\udccb ${added.length} tour${added.length>1?'s':''} added to ScanLog`);
   render();
   renderImport();
+}
+
+async function clearSequencing(){
+  if(!confirm('Are you sure? This will remove ALL wave/sequencing data and reset the tracker.'))return;
+  try{
+    const r=await fetch('/api/clear_data',{method:'POST',headers:{'X-Token':TOKEN}});
+    if(r.ok){
+      showToast('\ud83d\uddd1\ufe0f Sequencing data cleared');
+      location.reload();
+    } else {
+      showToast('\u274c Failed to clear data');
+    }
+  }catch(e){showToast('\u274c Network error');}
 }
 
 
