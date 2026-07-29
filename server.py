@@ -167,7 +167,7 @@ def send_slack_message(text, dsp=None):
     if not webhook:
         return False
     try:
-        resp = requests.post(webhook, json={"Content": text}, timeout=10)
+        resp = requests.post(webhook, json={"text": text}, timeout=10)
         return resp.status_code == 200
     except Exception:
         return False
