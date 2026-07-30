@@ -396,7 +396,7 @@ def slack_late():
     if not route:
         return jsonify({'error': 'Missing route'}), 400
     msg = (
-        f":warning: *Late Tour Alert \u2014 DNX3*\n\n"
+        f"\u26a0\ufe0f Late Tour Alert \u2014 DNX3\n\n"
         f"Lieber DSP,\n\n"
         f"wir m\u00f6chten dich darauf hinweisen, dass deine Tour nicht rechtzeitig zur geplanten Welle eingetroffen ist. "
         f"Gem\u00e4\u00df unseren Vereinbarungen werden wir die Tour an einen alternativen DSP vergeben, "
@@ -424,15 +424,48 @@ def slack_report():
     title = body.get('title', '')
     if not report_text:
         return jsonify({'error': 'Missing report text'}), 400
-    msg = f"{title}\n```\n{report_text}\n```"
+    msg = f"{title}\n{report_text}"
     success = send_slack_message(msg)
     if success:
         return jsonify({'ok': True})
     else:
         return jsonify({'error': 'Slack webhook failed or disabled'}), 500
 
-# — SocketIO —————————————————————————————————————————————————————
+@app.route('/api/test_dsp_alert', methods=['POST'])
+def test_dsp_alert():
+    """Send a full test late alert message to a specific DSP webhook."""
+    role, err = require_role('manager')
+    if err: return err
+    body = request.get_json(silent=True) or {}
+    dsp = body.get('dsp', '').strip()
+    if not dsp:
+        return jsonify({'error': 'Missing DSP name'}), 400
+    webhook = get_slack_webhook(dsp=dsp)
+    if not webhook:
+        return jsonify({'error': f'No webhook configured for DSP: {dsp}'}), 400
+    msg = (
+        f"\u26a0\ufe0f Late Tour Alert \u2014 DNX3 [TEST]\n\n"
+        f"Lieber DSP,\n\n"
+        f"wir m\u00f6chten dich darauf hinweisen, dass deine Tour nicht rechtzeitig zur geplanten Welle eingetroffen ist. "
+        f"Gem\u00e4\u00df unseren Vereinbarungen werden wir die Tour an einen alternativen DSP vergeben, "
+        f"sollte die Abholung nicht innerhalb von 30 Minuten nach der geplanten Ankunftszeit erfolgen.\n\n"
+        f"Bitte stelle sicher, dass deine Fahrer zuk\u00fcnftig p\u00fcnktlich zum vereinbarten Zeitpunkt eintreffen.\n"
+        f"Bei Fragen oder Problemen kontaktiere uns bitte umgehend.\n\n"
+        f"Viele Gr\u00fc\u00dfe\n\n"
+        f"DSP: {dsp}\n"
+        f"Route: TEST-ROUTE\n"
+        f"Wave: 07:30 AM"
+    )
+    try:
+        resp = requests.post(webhook, json={"text": msg}, timeout=10)
+        if resp.status_code == 200:
+            return jsonify({'ok': True})
+        else:
+            return jsonify({'error': f'Slack returned status {resp.status_code}'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
+# — SocketIO —————————————————————————————————————————————————————
 
 # —— Clear data endpoint (manager only) ————————————————————————————————
 
