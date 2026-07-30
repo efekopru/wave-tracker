@@ -7,7 +7,7 @@ let TOKEN = localStorage.getItem('dnx3_token') || '';
 let ROLE  = localStorage.getItem('dnx3_role')  || '';
 
 // ── App state ─────────────────────────────────────────────────────────────────
-let state       = {};   // waveIdx -> { route -> { time, uniform } }
+let state       = {};   // waveIdx -> { route -> { time } }
 let notes       = {};   // route -> {text, otd}
 let scanlog     = [];   // array of route strings
 let waveOpen    = {};
@@ -21,17 +21,15 @@ let notePanel   = {open:false, route:''};
 const slackAlerted = new Set();
 
 // Editable report state
-let rptEdits = { late: '', otd: '', uniform: '', reportNotes: '' };
-let rptEditMode = { late: false, otd: false, uniform: false };
+let rptEdits = { late: '', otd: '', reportNotes: '' };
+let rptEditMode = { late: false, otd: false };
 
 if (dark) document.body.classList.add('dark');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function isIn(wi, r)      { return !!(state[wi] && state[wi][r]); }
-function hasUniform(wi,r) { return !!(state[wi] && state[wi][r] && state[wi][r].uniform); }
 function inTime(wi, r)    { return state[wi]?.[r]?.time || ''; }
 function inCount(wi)      { return Object.keys(state[String(wi)] || {}).length; }
-function uniCount(wi)     { return Object.values(state[String(wi)] || {}).filter(v=>v.uniform).length; }
 function allR(w)          { return [...(w.green||[]), ...(w.red||[])]; }
 function sortByDsp(arr)   { return [...arr].sort((a,b)=>a.dsp.localeCompare(b.dsp)||a.route.localeCompare(b.route,undefined,{numeric:true})); }
 
@@ -227,12 +225,6 @@ async function apiCheckin(wi,route,checked,time){
   }catch(e){showToast('⚠️ Sync error — check connection');}
 }
 
-async function apiUniform(wi,route,value){
-  try{
-    await fetch('/api/uniform',{method:'POST',headers:{'Content-Type':'application/json','X-Token':TOKEN},
-      body:JSON.stringify({waveIdx:wi,route,uniform:value})});
-  }catch(e){showToast('⚠️ Sync error — check connection');}
-}
 
 async function apiResetWave(wi){
   try{
@@ -271,7 +263,7 @@ async function checkSlackLateAlerts(){
     const waveMinutes=wMin(w.time);
     if(waveMinutes===9999)return;
     // Only trigger if current time has passed the wave time
-    if(nowMin<=waveMinutes+1)return; // alert 1 min after wave time
+    if(nowMin<waveMinutes+1)return; // alert 1 min after wave time (1-min buffer)
     const allRoutes=[...effGreen(w),...effRed(w)];
     allRoutes.forEach(r=>{
       if(isIn(i,r.route))return; // already checked in
@@ -304,18 +296,11 @@ function connectSocket(){
   socket.on('state_update',d=>{
     const wi=String(d.waveIdx);
     if(!state[wi])state[wi]={};
-    if(d.checked) state[wi][d.route]={time:d.time,uniform:d.uniform||false};
+    if(d.checked) state[wi][d.route]={time:d.time};
     else delete state[wi][d.route];
     render();
   });
 
-  socket.on('uniform_update',d=>{
-    const wi=String(d.waveIdx);
-    if(!state[wi])state[wi]={};
-    if(!state[wi][d.route])state[wi][d.route]={time:'',uniform:false};
-    state[wi][d.route].uniform=d.uniform;
-    render();
-  });
 
   socket.on('wave_reset',d=>{
     delete state[String(d.waveIdx)]; render();
@@ -480,13 +465,6 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .cr{font-weight:700;font-size:.82rem;}.cs{font-size:.65rem;color:var(--subtext);margin-top:1px;}
 .cd{font-size:.63rem;color:var(--subtext);margin-top:1px;}.ct{font-size:.63rem;color:#3b82f6;margin-top:2px;font-weight:600;}
 .dark .ct{color:#60a5fa;}
-.urow{margin-top:6px;border-top:1px solid rgba(0,0,0,.08);padding-top:5px;display:flex;align-items:center;gap:4px;}
-.dark .urow{border-top-color:rgba(255,255,255,.08);}
-.ubtn{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:5px;border:1px solid rgba(0,0,0,.15);background:rgba(255,255,255,.5);cursor:pointer;font-size:.63rem;font-weight:600;color:#374151;transition:background .15s;white-space:nowrap;}
-.dark .ubtn{background:rgba(255,255,255,.08);color:#cbd5e1;border-color:rgba(255,255,255,.1);}
-.ubtn:hover{background:rgba(255,255,255,.8);}
-.ubtn.on{background:#dcfce7;border-color:#86efac;color:#166534;}
-.dark .ubtn.on{background:#052e16;border-color:#166534;color:#86efac;}
 .pen-btn{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:5px;border:1px solid rgba(0,0,0,.15);background:rgba(255,255,255,.5);cursor:pointer;font-size:.7rem;transition:background .15s;margin-left:auto;}
 .dark .pen-btn{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.1);}
 .pen-btn:hover{background:rgba(255,255,255,.8);}
@@ -595,19 +573,18 @@ document.head.appendChild(appStyles);
 
 // ── Card HTML ─────────────────────────────────────────────────────────────────
 function cardHtml(wi,r,color){
-  const chk=isIn(wi,r.route),uni=hasUniform(wi,r.route),t=inTime(wi,r.route);
+  const chk=isIn(wi,r.route),t=inTime(wi,r.route);
   const late=isLate(wi)&&!chk, eff=late?'late':color;
   const q=searchQ;
   const match=!q||r.route.toLowerCase()===q||r.dsp.toLowerCase()===q||r.staging.toLowerCase()===q;
   const hasN=hasNote(r.route);
   const isOtd=getNoteOtd(r.route);
-  // Change #6: OTD badge (🎯) visible to both roles
   return`<div class="rcard ${eff}${chk?' checked':''}${q&&!match?' dimmed':''}" data-wi="${wi}" data-r="${r.route}">
     <div class="ck">✓</div>
     ${isOtd?'<span class="otd-badge">🎯</span>':''}
     <div class="cr">${r.route}</div><div class="cs">${r.staging}</div><div class="cd">${r.dsp}</div>
     ${t?`<div class="ct">${t}</div>`:''}
-    <div class="urow"><button class="ubtn${uni?' on':''}" data-wi="${wi}" data-r="${r.route}" data-action="u" onclick="event.stopPropagation()"><span>👕</span>${uni?' Uniform ✓':' Uniform'}</button><button class="pen-btn${hasN?' has-note':''}" data-r="${r.route}" data-action="note" onclick="event.stopPropagation()">✏️</button></div>
+    <div class="urow"><button class="pen-btn${hasN?' has-note':''}" data-r="${r.route}" data-action="note" onclick="event.stopPropagation()">✏️</button></div>
   </div>`;
 }
 
@@ -625,7 +602,7 @@ function bindCards(c){
       } else {
         const t=new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
         if(!state[String(wi)])state[String(wi)]={};
-        state[String(wi)][ro]={time:t,uniform:false};
+        state[String(wi)][ro]={time:t};
         showToast(`✅ ${ro} checked in at ${t}`);
         await apiCheckin(wi,ro,true,t);
         if(inCount(wi)===WAVES[wi].total){setTimeout(()=>{playDing();showToast(`🎉 Wave ${WAVES[wi].time} — all in!`);},350);}
@@ -633,22 +610,6 @@ function bindCards(c){
       clearSearch();
     });
   });
-  c.querySelectorAll('[data-action="u"]').forEach(btn=>{
-    btn.addEventListener('click',async e=>{
-      e.stopPropagation();
-      const wi=+btn.dataset.wi, ro=btn.dataset.r;
-      if(!state[String(wi)])state[String(wi)]={};
-      if(!state[String(wi)][ro]){
-        const t=new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
-        state[String(wi)][ro]={time:t,uniform:false};
-        await apiCheckin(wi,ro,true,t);
-      }
-      const newVal=!state[String(wi)][ro].uniform;
-      state[String(wi)][ro].uniform=newVal;
-      showToast(newVal?`👕 Uniform ✓ — ${ro}`:`👕 Uniform removed — ${ro}`);
-      await apiUniform(wi,ro,newVal);
-      clearSearch();
-    });
   });
   c.querySelectorAll('[data-action="note"]').forEach(btn=>{
     btn.addEventListener('click',e=>{
@@ -704,13 +665,13 @@ function playDing(){try{const c=new(window.AudioContext||window.webkitAudioConte
 
 // ── Report ────────────────────────────────────────────────────────────────────
 // Report collapsible state
-let rptCollapse={late:false,otd:false,uniform:false};
+let rptCollapse={late:false,otd:false};
 
 function pb(p){const cls=p===100?'pb-g':p>=80?'pb-y':'pb-r';const tag=p===100?`<span class="t100">100%</span>`:p>=80?`<span class="twarn">${p}%</span>`:`<span class="tbad">${p}%</span>`;return`${tag}<span class="pbar-w"><span class="pbar ${cls}" style="width:${p}%"></span></span>`;}
 
 function getReportData(){
-  let tot=0,tin=0,tuni=0;
-  WAVES.forEach((w,i)=>{tot+=w.total;tin+=inCount(i);tuni+=uniCount(i);});
+  let tot=0,tin=0;
+  WAVES.forEach((w,i)=>{tot+=w.total;tin+=inCount(i);});
 
   // Change #1: Late arrivals — routes checked in AFTER wave time (no grace)
   const lateArrivals=[];
@@ -741,17 +702,6 @@ function getReportData(){
     });
   });
 
-  // Missing uniform: checked in but no uniform
-  const missUni=[];
-  WAVES.forEach((w,i)=>{
-    sortByDsp(allR(w).filter(r=>isIn(i,r.route)&&!hasUniform(i,r.route))).forEach(r=>{
-      missUni.push({waveTime:w.time,route:r.route,dsp:r.dsp});
-    });
-  });
-
-  // Uniform compliance %
-  const uniPct=tin>0?Math.round(tuni/tin*100):0;
-
   // Change #7: Fix Expected OTD = (Total - OTD Hits) / Total × 100, rounded to 2 decimal places
   const otdPct=tot>0?Math.round(((tot-otdHits.length)/tot*100)*100)/100:100;
 
@@ -774,16 +724,14 @@ function getReportData(){
     return {time:w.time,total:w.total,late:wLate,otd:wOtd};
   });
 
-  // DSP breakdown with late/otd/uniform (no grace)
+  // DSP breakdown with late/otd (no grace)
   const dspMap={};
   WAVES.forEach((w,i)=>{
     const waveMinutes=wMin(w.time);
     allR(w).forEach(r=>{
-      if(!dspMap[r.dsp])dspMap[r.dsp]={total:0,late:0,otd:0,uniformIn:0,checkedIn:0};
+      if(!dspMap[r.dsp])dspMap[r.dsp]={total:0,late:0,otd:0};
       dspMap[r.dsp].total++;
       if(isIn(i,r.route)){
-        dspMap[r.dsp].checkedIn++;
-        if(hasUniform(i,r.route))dspMap[r.dsp].uniformIn++;
         const ct=inTime(i,r.route);
         if(ct&&waveMinutes!==9999){
           const p=ct.match(/^(\d{1,2}):(\d{2})$/);
@@ -794,7 +742,7 @@ function getReportData(){
     });
   });
 
-  return {tot,tin,tuni,uniPct,otdPct,lateArrivals,otdHits,missUni,waveBreakdown,dspMap};
+  return {tot,tin,otdPct,lateArrivals,otdHits,waveBreakdown,dspMap};
 }
 
 function renderReport(){
@@ -813,7 +761,6 @@ function renderReport(){
     <div class="sstat"><div class="sval sv-blue">${d.tot}</div><div class="slbl">Total Routes</div></div>
     <div class="sstat"><div class="sval sv-red">${d.lateArrivals.length}</div><div class="slbl">Late Entries</div></div>
     <div class="sstat"><div class="sval sv-amber">${d.otdHits.length}</div><div class="slbl">OTD Hits</div></div>
-    <div class="sstat"><div class="sval sv-green">${d.uniPct}%</div><div class="slbl">Uniform Compliance</div></div>
     <div class="sstat"><div class="sval ${d.otdPct>=98?'sv-green':d.otdPct>=95?'sv-amber':'sv-red'}">${d.otdPct}%</div><div class="slbl">Expected OTD</div></div>
   </div></div>
 
@@ -825,10 +772,9 @@ function renderReport(){
 
   <!-- DSP Performance -->
   <div class="rsec"><div class="rsec-title">DSP Performance</div><table class="rtbl">
-    <thead><tr><th>DSP</th><th>Total Routes</th><th>Late Entries</th><th>OTD Hits</th><th>Uniform Compliance</th></tr></thead>
+    <thead><tr><th>DSP</th><th>Total Routes</th><th>Late Entries</th><th>OTD Hits</th></tr></thead>
     <tbody>${Object.entries(d.dspMap).sort((a,b)=>a[0].localeCompare(b[0])).map(([name,v])=>{
-      const up=v.checkedIn>0?Math.round(v.uniformIn/v.checkedIn*100):0;
-      return`<tr><td><strong>${name}</strong></td><td>${v.total}</td><td>${v.late>0?`<span style="color:var(--red)">${v.late}</span>`:'<span style="color:var(--green)">0</span>'}</td><td>${v.otd>0?`<span style="color:#d97706;font-weight:700">${v.otd} 🎯</span>`:'<span style="color:var(--subtext)">0</span>'}</td><td>${v.checkedIn>0?pb(up):'<span style="color:var(--subtext)">—</span>'}</td></tr>`;
+      return`<tr><td><strong>${name}</strong></td><td>${v.total}</td><td>${v.late>0?`<span style="color:var(--red)">${v.late}</span>`:'<span style="color:var(--green)">0</span>'}</td><td>${v.otd>0?`<span style="color:#d97706;font-weight:700">${v.otd} 🎯</span>`:'<span style="color:var(--subtext)">0</span>'}</td></tr>`;
     }).join('')}</tbody>
   </table></div>
 
@@ -846,13 +792,6 @@ function renderReport(){
     <tbody>${d.otdHits.map(o=>`<tr><td>${o.waveTime}</td><td><strong>${o.route}</strong></td><td>${o.dsp}</td><td>${o.checkinTime}</td><td><input type="text" class="rpt-reason-input" value="${(o.noteText||'').replace(/"/g,'&quot;')}" placeholder="Add reason..." onchange="rptEditOtdReason('${o.route}',this.value)"></td><td><button class="rpt-x-btn" onclick="rptUncheckOtd('${o.route}')" title="Remove OTD">✕</button></td></tr>`).join('')}</tbody>
   </table>`}${rptEditMode.otd?`<textarea class="rpt-edit-area" id="rpt-edit-otd" placeholder="Add annotations for OTD hits..." oninput="rptEdits.otd=this.value">${rptEdits.otd}</textarea>`:''}</div></div>
 
-  <!-- Missing Uniform (collapsible + editable) -->
-  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.uniform?' open':''}" onclick="toggleRptSec('uniform')"><span class="coll-chev">▶</span> 👕 Missing Uniform (${d.missUni.length}) ${editBtnHtml('uniform')}</div>
-  <div class="rsec-body${rptCollapse.uniform?' open':''}" id="rpt-uniform">${d.missUni.length===0?'<div class="empty-sec">✅ All checked-in drivers had uniform confirmed!</div>':`<table class="rtbl">
-    <thead><tr><th>DSP</th><th>Route</th><th>Wave Time</th></tr></thead>
-    <tbody>${d.missUni.map(u=>`<tr><td><strong>${u.dsp}</strong></td><td>${u.route}</td><td>${u.waveTime}</td></tr>`).join('')}</tbody>
-  </table>`}${rptEditMode.uniform?`<textarea class="rpt-edit-area" id="rpt-edit-uniform" placeholder="Add annotations for uniform issues..." oninput="rptEdits.uniform=this.value">${rptEdits.uniform}</textarea>`:''}</div></div>
-
   <!-- Change #4: Report Notes textarea (manager-only) -->
   ${ROLE==='manager'?`<div class="rpt-notes-sec">
     <div class="rpt-notes-title">📝 Report Notes</div>
@@ -861,7 +800,7 @@ function renderReport(){
 
   <!-- Actions -->
   <div class="rsec"><div class="ractions">
-    <button class="rabtn pri" onclick="downloadRpt()">⬇️ Download</button>
+    <button class="rabtn pri" onclick="downloadRpt()">⬇️ Download .txt</button>
     <button class="rabtn" onclick="copyRpt()">📋 Copy</button>
     ${ROLE==='manager'?'<button class="rabtn" onclick="submitRptToSlack()">📤 Submit to Slack</button>':''}
     ${ROLE==='manager'?'<button class="rabtn" onclick="exportDayData()">💾 Export Day Data</button>':''}
@@ -885,7 +824,7 @@ async function rptEditLateTime(waveIdx,route,newTime){
   if(!newTime)return;
   const wi=String(waveIdx);
   if(!state[wi])state[wi]={};
-  if(!state[wi][route])state[wi][route]={time:newTime,uniform:false};
+  if(!state[wi][route])state[wi][route]={time:newTime};
   else state[wi][route].time=newTime;
   await apiCheckin(waveIdx,route,true,newTime);
   renderReport();
@@ -901,7 +840,7 @@ async function rptUncheckLate(waveIdx,route,waveTime){
   const onTime=String(h).padStart(2,'0')+':'+String(mn).padStart(2,'0');
   const wi=String(waveIdx);
   if(!state[wi])state[wi]={};
-  if(!state[wi][route])state[wi][route]={time:onTime,uniform:false};
+  if(!state[wi][route])state[wi][route]={time:onTime};
   else state[wi][route].time=onTime;
   await apiCheckin(waveIdx,route,true,onTime);
   showToast(`⏰ ${route} set on-time (${onTime})`);
@@ -916,7 +855,6 @@ async function rptEditOtdReason(route,reason){
   renderReport();
 }
 
-// ── Report: Uncheck OTD ──────────────────────────────────────────────────────
 async function rptUncheckOtd(route){
   const currentText=getNoteText(route);
   if(currentText){
@@ -933,7 +871,8 @@ function buildReportText(){
   const d=getReportData();
   const now=new Date();
   const dateStr=now.toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'});
-  let t=`DNX3 End of Day Yard Breakdown\n`;
+  let t=`\`\`\`\n`;
+  t+=`DNX3 End of Day Yard Breakdown\n`;
   t+=`Date: ${dateStr}\n`;
   t+=`${'\u2500'.repeat(50)}\n\n`;
 
@@ -941,7 +880,6 @@ function buildReportText(){
   t+=`  Total Routes: ${d.tot}\n`;
   t+=`  Late Entries: ${d.lateArrivals.length}\n`;
   t+=`  OTD Hits: ${d.otdHits.length}\n`;
-  t+=`  Uniform Compliance: ${d.uniPct}%\n`;
   t+=`  Expected OTD: ${d.otdPct}%\n\n`;
 
   t+=`WAVE BREAKDOWN\n`;
@@ -952,11 +890,10 @@ function buildReportText(){
   });
 
   t+=`\nDSP PERFORMANCE\n`;
-  t+=`  ${'DSP'.padEnd(8)}${'Total'.padEnd(8)}${'Late'.padEnd(8)}${'OTD'.padEnd(8)}Uniform\n`;
-  t+=`  ${'\u2500'.repeat(40)}\n`;
+  t+=`  ${'DSP'.padEnd(8)}${'Total'.padEnd(8)}${'Late'.padEnd(8)}OTD\n`;
+  t+=`  ${'\u2500'.repeat(36)}\n`;
   Object.entries(d.dspMap).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([name,v])=>{
-    const up=v.checkedIn>0?Math.round(v.uniformIn/v.checkedIn*100):0;
-    t+=`  ${name.padEnd(8)}${String(v.total).padEnd(8)}${String(v.late).padEnd(8)}${String(v.otd).padEnd(8)}${up}%\n`;
+    t+=`  ${name.padEnd(8)}${String(v.total).padEnd(8)}${String(v.late).padEnd(8)}${v.otd}\n`;
   });
 
   t+=`\nLATE ARRIVALS (${d.lateArrivals.length})\n`;
@@ -977,25 +914,16 @@ function buildReportText(){
   }
   if(rptEdits.otd){ t+=`  Notes: ${rptEdits.otd}\n`; }
 
-  t+=`\nMISSING UNIFORM (${d.missUni.length})\n`;
-  if(d.missUni.length===0) t+=`  All confirmed\n`;
-  else{
-    t+=`  ${'DSP'.padEnd(8)}${'Route'.padEnd(12)}Wave\n`;
-    t+=`  ${'\u2500'.repeat(32)}\n`;
-    d.missUni.forEach(u=>{ t+=`  ${u.dsp.padEnd(8)}${u.route.padEnd(12)}${u.waveTime}\n`; });
-  }
-  if(rptEdits.uniform){ t+=`  Notes: ${rptEdits.uniform}\n`; }
-
-  // Include report notes if present
   if(rptEdits.reportNotes){
     t+=`\nREPORT NOTES\n`;
     t+=`  ${rptEdits.reportNotes}\n`;
   }
 
   t+=`\n${'\u2500'.repeat(50)}\n`;
-  t+=`Generated: ${now.toLocaleTimeString('de-DE')} | Developed by @koeabdur\n`;
+  t+=`Generated: ${now.toLocaleTimeString('de-DE')}\n`;
   return t;
 }
+
 
 function copyRpt(){
   const d=getReportData();
@@ -1004,7 +932,6 @@ function copyRpt(){
   t+=`  Total Routes: ${d.tot}\n`;
   t+=`  Late Entries: ${d.lateArrivals.length}\n`;
   t+=`  OTD Hits: ${d.otdHits.length}\n`;
-  t+=`  Uniform Compliance: ${d.uniPct}%\n`;
   t+=`  Expected OTD: ${d.otdPct}%\n\n`;
 
   t+=`WAVE BREAKDOWN\n`;
@@ -1014,8 +941,7 @@ function copyRpt(){
 
   t+=`\nDSP PERFORMANCE\n`;
   Object.entries(d.dspMap).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([name,v])=>{
-    const up=v.checkedIn>0?Math.round(v.uniformIn/v.checkedIn*100):0;
-    t+=`  ${name}: ${v.total} routes | ${v.late} late | ${v.otd} OTD | Uniform ${up}%\n`;
+    t+=`  ${name}: ${v.total} routes | ${v.late} late | ${v.otd} OTD\n`;
   });
 
   t+=`\nLATE ARRIVALS (${d.lateArrivals.length})\n`;
@@ -1028,16 +954,10 @@ function copyRpt(){
   else d.otdHits.forEach(o=>{ t+=`  ${o.waveTime} | ${o.route} | ${o.dsp} | ${o.checkinTime} | ${o.noteText||'—'}\n`; });
   if(rptEdits.otd) t+=`  Notes: ${rptEdits.otd}\n`;
 
-  t+=`\nMISSING UNIFORM (${d.missUni.length})\n`;
-  if(d.missUni.length===0) t+=`  ✅ All confirmed\n`;
-  else d.missUni.forEach(u=>{ t+=`  ${u.dsp} | ${u.route} | ${u.waveTime}\n`; });
-  if(rptEdits.uniform) t+=`  Notes: ${rptEdits.uniform}\n`;
-
   if(rptEdits.reportNotes) t+=`\nREPORT NOTES\n  ${rptEdits.reportNotes}\n`;
 
   navigator.clipboard.writeText(t).then(()=>showToast('📋 Copied!'));
 }
-
 
 
 function downloadRpt(){
@@ -1129,6 +1049,7 @@ function renderSettings(){
       dspRows+=`<div class="wh-row" data-dsp="${dsp}">
         <span class="wh-dsp">${dsp}</span>
         <input type="text" class="wh-input" value="${url}" placeholder="https://hooks.slack.com/services/..." data-dsp="${dsp}"/>
+        <button class="rabtn" onclick="testDspAlert('${dsp}')" title="Send test late alert to this DSP" style="white-space:nowrap;font-size:.7rem;padding:4px 10px;">\ud83e\uddea Test Alert</button>
         <button class="wh-rm" onclick="removeDspWebhook('${dsp}')" title="Remove">&times;</button>
       </div>`;
     });
@@ -1250,6 +1171,20 @@ async function testWebhook(target){
 }
 
 
+
+async function testDspAlert(dsp){
+  const status=document.getElementById('webhook-status');
+  status.innerHTML='<span style="color:var(--subtext);">Sending test alert to '+dsp+'...</span>';
+  try{
+    const r=await fetch('/api/test_dsp_alert',{method:'POST',headers:{'Content-Type':'application/json','X-Token':TOKEN},body:JSON.stringify({dsp})});
+    const d=await r.json();
+    if(r.ok){
+      status.innerHTML='<span style="color:var(--green);">\u2705 Test alert sent to '+dsp+'! Check Slack.</span>';
+    } else {
+      status.innerHTML='<span style="color:var(--red);">\u274c '+(d.error||'Failed')+'</span>';
+    }
+  }catch(e){ status.innerHTML='<span style="color:var(--red);">\u274c Network error</span>'; }
+}
 
 async function exportSettings(){
   const settings=await fetchSettings();
