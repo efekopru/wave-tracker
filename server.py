@@ -69,6 +69,24 @@ PASSWORDS = {
 sessions = {}
 SESSION_TTL_HOURS = 12
 
+# Server-side dedup for late alerts — resets daily
+# key: "YYYY-MM-DD_waveIndex_route"
+_late_alerted: set = set()
+_late_alerted_date: str = ''
+
+def already_alerted(wave_time: str, route: str) -> bool:
+    """Return True if this route+wave was already alerted today. Records it if not."""
+    global _late_alerted, _late_alerted_date
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+    if today != _late_alerted_date:
+        _late_alerted = set()
+        _late_alerted_date = today
+    key = f"{today}_{wave_time}_{route}"
+    if key in _late_alerted:
+        return True
+    _late_alerted.add(key)
+    return False
+
 app = Flask(__name__, static_folder=BASE_DIR, static_url_path='')
 CORS(app)
 try:
@@ -400,6 +418,8 @@ def slack_late():
     staging = body.get('staging', '')
     if not route:
         return jsonify({'error': 'Missing route'}), 400
+    if already_alerted(wave_time, route):
+        return jsonify({'ok': True, 'skipped': 'already alerted today'})
     msg = (
         f"\u26a0\ufe0f Late Tour Alert \u2014 DNX3\n\n"
         f"Lieber DSP,\n\n"
