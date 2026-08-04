@@ -1,4 +1,4 @@
-// DNX3 Wave Tracker — Client JS (Part 1: Auth, State, Socket, Sidebar)
+﻿// DNX3 Wave Tracker — Client JS (Part 1: Auth, State, Socket, Sidebar)
 'use strict';
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -361,6 +361,21 @@ function switchTab(t){
   if(t==='i')renderImport();
   if(t==='s')renderSettings();
 }
+// ── Quick OTD toggle (card button) ────────────────────────────────────────────
+async function quickToggleOtd(e, route){
+  e.stopPropagation();
+  const currentOtd=getNoteOtd(route);
+  const currentText=getNoteText(route);
+  const newOtd=!currentOtd;
+  if(currentText||newOtd){
+    notes[route]={text:currentText,otd:newOtd};
+  } else {
+    delete notes[route];
+  }
+  await apiSaveNote(route,currentText,newOtd);
+  showToast(newOtd?`🚨 ${route} marked as OTD`:`✅ OTD removed for ${route}`);
+  render();
+}
 
 // ── Note Panel ────────────────────────────────────────────────────────────────
 function openNotePanel(route){
@@ -394,6 +409,8 @@ async function saveNote(){
   }
   await apiSaveNote(notePanel.route,text,otd);
   showToast(`📝 Note saved for ${notePanel.route}`);
+  closeNotePanel();
+  clearSearch();
   render();
 }
 
@@ -470,6 +487,9 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .pen-btn:hover{background:rgba(255,255,255,.8);}
 .pen-btn.has-note{background:#fef3c7;border-color:#f59e0b;}
 .dark .pen-btn.has-note{background:#451a03;border-color:#f59e0b;}
+.otd-btn{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:5px;border:1.5px solid var(--border);background:var(--surface2);cursor:pointer;font-size:.65rem;opacity:.45;transition:opacity .15s,background .15s;}
+.otd-btn:hover{opacity:1;}
+.otd-btn.otd-active{background:#fef2f2;border-color:#dc2626;opacity:1;}
 .otd-badge{position:absolute;top:4px;left:7px;font-size:.7rem;}
 .sw-lbl{font-size:.7rem;font-weight:700;color:var(--subtext);text-transform:uppercase;letter-spacing:.6px;padding:6px 0 4px;border-top:1px solid var(--border);margin-top:4px;}
 .sw-lbl:first-child{border-top:none;margin-top:0;}
@@ -516,12 +536,12 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .rsec-title.collapsible.open .coll-chev{transform:rotate(90deg);}
 .rsec-body{display:none;}
 .rsec-body.open{display:block;}
-.sgrid{display:grid;grid-template-columns:repeat(5,1fr);}
+.sgrid{display:grid;grid-template-columns:repeat(4,1fr);}
 .sstat{padding:13px 10px;text-align:center;border-right:1px solid var(--border);}
 .sstat:last-child{border-right:none;}
 .sval{font-size:1.35rem;font-weight:700;}.slbl{font-size:.65rem;color:var(--subtext);margin-top:2px;}
 .sv-blue{color:#3b82f6;}.sv-green{color:var(--green);}.sv-red{color:var(--red);}.sv-amber{color:#d97706;}
-.rtbl{width:100%;border-collapse:collapse;font-size:.76rem;}
+.rtbl{width:100%;border-collapse:collapse;font-size:.76rem;table-layout:fixed;}
 .rtbl th{padding:7px 11px;text-align:left;font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--subtext);border-bottom:1px solid var(--border);}
 .rtbl td{padding:7px 11px;border-bottom:1px solid var(--border);}
 .rtbl tr:last-child td{border-bottom:none;}
@@ -571,20 +591,22 @@ main{flex:1;overflow-y:auto;padding:16px;}
 `;
 document.head.appendChild(appStyles);
 
-// ── Card HTML ─────────────────────────────────────────────────────────────────
 function cardHtml(wi,r,color){
   const chk=isIn(wi,r.route),t=inTime(wi,r.route);
   const late=isLate(wi)&&!chk, eff=late?'late':color;
   const q=searchQ;
   const match=!q||r.route.toLowerCase()===q||r.dsp.toLowerCase()===q||r.staging.toLowerCase()===q;
   const hasN=hasNote(r.route);
-  const isOtd=getNoteOtd(r.route);
+  const isOtd=getNoteOtd(r.route); const otdTitle=isOtd?'Remove OTD':'Mark as OTD';
   return`<div class="rcard ${eff}${chk?' checked':''}${q&&!match?' dimmed':''}" data-wi="${wi}" data-r="${r.route}">
-    <div class="ck">✓</div>
-    ${isOtd?'<span class="otd-badge">🎯</span>':''}
+    <div class="ck">☑</div>
+    ${isOtd?'<span class="otd-badge">🚨</span>':''}
     <div class="cr">${r.route}</div><div class="cs">${r.staging}</div><div class="cd">${r.dsp}</div>
     ${t?`<div class="ct">${t}</div>`:''}
-    <div class="urow"><button class="pen-btn${hasN?' has-note':''}" data-r="${r.route}" data-action="note" onclick="event.stopPropagation()">✏️</button></div>
+    <div class="urow">
+      <button class="pen-btn${hasN?' has-note':''}" data-r="${r.route}" data-action="note" onclick="event.stopPropagation()">✏️</button>
+      <button class="otd-btn${isOtd?' otd-active':''}" data-r="${r.route}" data-action="otd" onclick="quickToggleOtd(event,this.dataset.r)" title="${otdTitle}">🚨</button>
+    </div>
   </div>`;
 }
 
@@ -610,12 +632,10 @@ function bindCards(c){
       clearSearch();
     });
   });
-  });
   c.querySelectorAll('[data-action="note"]').forEach(btn=>{
     btn.addEventListener('click',e=>{
       e.stopPropagation();
       openNotePanel(btn.dataset.r);
-      clearSearch();
     });
   });
 }
@@ -751,7 +771,7 @@ function renderReport(){
   const d=getReportData();
 
   // Change #4: edit toggle buttons for collapsible sections
-  const editBtnHtml=(key)=>ROLE==='manager'?`<button class="rpt-edit-toggle${rptEditMode[key]?' active':''}" onclick="event.stopPropagation();toggleRptEdit('${key}')">${rptEditMode[key]?'✓ Done':'✏️ Edit'}</button>`:'';
+  const editBtnHtml=(key)=>ROLE==='manager'?`<button class="rpt-edit-toggle${rptEditMode[key]?' active':''}" data-key="${key}" onclick="event.stopPropagation();toggleRptEdit(this.dataset.key)">${rptEditMode[key]?'✓ Done':'✏️ Edit'}</button>`:'';
 
   rv.innerHTML=`<div class="rpt-title">📋 End of Day Yard Breakdown</div>
   <div class="rpt-sub">DNX3 · ${now.toLocaleDateString('en-GB',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})}</div>
@@ -782,14 +802,14 @@ function renderReport(){
   <div class="rsec"><div class="rsec-title collapsible${rptCollapse.late?' open':''}" onclick="toggleRptSec('late')"><span class="coll-chev">▶</span> ⏰ Late Arrivals (${d.lateArrivals.length}) ${editBtnHtml('late')}</div>
   <div class="rsec-body${rptCollapse.late?' open':''}" id="rpt-late">${d.lateArrivals.length===0?'<div class="empty-sec">✅ No late arrivals!</div>':`<table class="rtbl">
     <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th><th>Edit Time</th><th></th></tr></thead>
-    <tbody>${d.lateArrivals.map(l=>`<tr><td>${l.waveTime}</td><td><strong>${l.route}</strong></td><td>${l.dsp}</td><td><span style="color:#dc2626;font-weight:600">${l.checkinTime}</span> <span style="color:var(--subtext);font-size:.65rem">(+${l.delay}min)</span></td><td><input type="time" class="rpt-time-input" value="${l.checkinTime}" onchange="rptEditLateTime(${l.waveIdx},'${l.route}',this.value)"></td><td><button class="rpt-x-btn" onclick="rptUncheckLate(${l.waveIdx},'${l.route}','${l.waveTime}')" title="Remove (set on-time)">✕</button></td></tr>`).join('')}</tbody>
+    <tbody>${d.lateArrivals.map(l=>`<tr><td>${l.waveTime}</td><td><strong>${l.route}</strong></td><td>${l.dsp}</td><td><span style="color:#dc2626;font-weight:600">${l.checkinTime}</span> <span style="color:var(--subtext);font-size:.65rem">(+${l.delay}min)</span></td><td><input type="time" class="rpt-time-input" value="${l.checkinTime}" data-wi2="${l.waveIdx}" data-r2="${l.route}" onchange="rptEditLateTime(+this.dataset.wi2,this.dataset.r2,this.value)"></td><td><button class="rpt-x-btn" data-wi="${l.waveIdx}" data-r="${l.route}" data-wt="${l.waveTime}" onclick="rptUncheckLate(+this.dataset.wi,this.dataset.r,this.dataset.wt)" title="Remove (set on-time)">✕</button></td></tr>`).join('')}</tbody>
   </table>`}${rptEditMode.late?`<textarea class="rpt-edit-area" id="rpt-edit-late" placeholder="Add annotations for late arrivals..." oninput="rptEdits.late=this.value">${rptEdits.late}</textarea>`:''}</div></div>
 
   <!-- OTD Hits (collapsible + editable) -->
   <div class="rsec"><div class="rsec-title collapsible${rptCollapse.otd?' open':''}" onclick="toggleRptSec('otd')"><span class="coll-chev">▶</span> 🎯 OTD Hits (${d.otdHits.length}) ${editBtnHtml('otd')}</div>
   <div class="rsec-body${rptCollapse.otd?' open':''}" id="rpt-otd">${d.otdHits.length===0?'<div class="empty-sec">No OTD hits marked yet.</div>':`<table class="rtbl">
     <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th><th>Reason</th><th></th></tr></thead>
-    <tbody>${d.otdHits.map(o=>`<tr><td>${o.waveTime}</td><td><strong>${o.route}</strong></td><td>${o.dsp}</td><td>${o.checkinTime}</td><td><input type="text" class="rpt-reason-input" value="${(o.noteText||'').replace(/"/g,'&quot;')}" placeholder="Add reason..." onchange="rptEditOtdReason('${o.route}',this.value)"></td><td><button class="rpt-x-btn" onclick="rptUncheckOtd('${o.route}')" title="Remove OTD">✕</button></td></tr>`).join('')}</tbody>
+    <tbody>${d.otdHits.map(o=>`<tr><td>${o.waveTime}</td><td><strong>${o.route}</strong></td><td>${o.dsp}</td><td>${o.checkinTime}</td><td><input type="text" class="rpt-reason-input" value="${(o.noteText||'').replace(/"/g,'&quot;')}" placeholder="Add reason..." data-r3="${o.route}" onchange="rptEditOtdReason(this.dataset.r3,this.value)"></td><td><button class="rpt-x-btn" data-r="${o.route}" onclick="rptUncheckOtd(this.dataset.r)" title="Remove OTD">✕</button></td></tr>`).join('')}</tbody>
   </table>`}${rptEditMode.otd?`<textarea class="rpt-edit-area" id="rpt-edit-otd" placeholder="Add annotations for OTD hits..." oninput="rptEdits.otd=this.value">${rptEdits.otd}</textarea>`:''}</div></div>
 
   <!-- Change #4: Report Notes textarea (manager-only) -->
@@ -1049,8 +1069,8 @@ function renderSettings(){
       dspRows+=`<div class="wh-row" data-dsp="${dsp}">
         <span class="wh-dsp">${dsp}</span>
         <input type="text" class="wh-input" value="${url}" placeholder="https://hooks.slack.com/services/..." data-dsp="${dsp}"/>
-        <button class="rabtn" onclick="testDspAlert('${dsp}')" title="Send test late alert to this DSP" style="white-space:nowrap;font-size:.7rem;padding:4px 10px;">\ud83e\uddea Test Alert</button>
-        <button class="wh-rm" onclick="removeDspWebhook('${dsp}')" title="Remove">&times;</button>
+        <button class="rabtn" data-dsp="${dsp}" onclick="testDspAlert(this.dataset.dsp)" title="Send test late alert to this DSP" style="white-space:nowrap;font-size:.7rem;padding:4px 10px;">\ud83e\uddea Test Alert</button>
+        <button class="wh-rm" data-dsp="${dsp}" onclick="removeDspWebhook(this.dataset.dsp)" title="Remove">&times;</button>
       </div>`;
     });
 
@@ -1092,11 +1112,12 @@ function renderSettings(){
 
       <div class="rsec" style="margin-top:16px;">
         <div class="rsec-title">About</div>
-        <div style="padding:12px 0;font-size:.78rem;color:var(--subtext);">
+        <div style="padding:12px 14px;font-size:.78rem;color:var(--subtext);line-height:1.7;">
           DNX3 Container Wave Tracker<br/>
           Developed by <strong>@koeabdur</strong><br/>
           Version 2.1
         </div>
+      </div>
       </div>
     `;
   });
@@ -1238,7 +1259,7 @@ function renderImport(){
           <input type="text" id="scanlog-input" class="scanlog-input" placeholder="Tour numbers (e.g. 249, 259, 5)..." onkeydown="if(event.key==='Enter')addScanlogEntry()"/>
           <button class="scanlog-add" onclick="addScanlogEntry()">Add</button>
         </div>
-        ${scanlog.length?`<ul class="scanlog-list">${scanlog.map(r=>`<li class="scanlog-item"><span>${r}</span><button class="scanlog-rm" onclick="removeScanlogEntry('${r}')">×</button></li>`).join('')}</ul>`:'<div class="scanlog-empty">No entries yet. Scanned tours will be moved to A/C staging group.</div>'}
+        ${scanlog.length?`<ul class="scanlog-list">${scanlog.map(r=>`<li class="scanlog-item"><span>${r}</span><button class="scanlog-rm" data-r="${r}" onclick="removeScanlogEntry(this.dataset.r)">×</button></li>`).join('')}</ul>`:'<div class="scanlog-empty">No entries yet. Scanned tours will be moved to A/C staging group.</div>'}
       </div>
     </div>`;
   }

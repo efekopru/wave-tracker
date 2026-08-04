@@ -1,4 +1,4 @@
-"""
+﻿"""
 DNX3 Wave Tracker — Local Network Server
 =========================================
 Flask + SocketIO server for real-time multi-device sync.
@@ -45,14 +45,14 @@ def load_settings():
 def save_settings(s):
     with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
         json.dump(s, f, indent=2)
-
 def get_slack_webhook(dsp=None):
-    """Get webhook URL. If dsp given, try DSP-specific first, then fall back to default."""
+    """Get webhook URL. If dsp given, only return DSP-specific webhook — no fallback."""
     settings = load_settings()
     if dsp:
         dsp_hooks = settings.get('dsp_webhooks', {})
         if dsp in dsp_hooks and dsp_hooks[dsp]:
             return dsp_hooks[dsp]
+        return ''  # DSP specified but no webhook configured — send nothing
     return settings.get('slack_webhook_url') or os.environ.get('SLACK_WEBHOOK_URL', '')
 
 # Passwords — read from environment variables (set in Render dashboard)
@@ -71,7 +71,12 @@ SESSION_TTL_HOURS = 12
 
 app = Flask(__name__, static_folder=BASE_DIR, static_url_path='')
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
+try:
+    import gevent
+    async_mode = 'gevent'
+except ImportError:
+    async_mode = 'threading'
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode=async_mode)
 
 # — State helpers ———————————————————————————————————————————————
 
@@ -184,7 +189,7 @@ def datajs():
 
 @app.route('/app.js')
 def appjs():
-    return send_from_directory(BASE_DIR, 'app.js')
+    return send_from_directory(BASE_DIR, 'app.js', max_age=0)
 
 @app.route('/ping')
 def ping():
