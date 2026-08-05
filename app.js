@@ -181,9 +181,8 @@ async function bootApp(){
     document.getElementById('tb-s').style.display='';
   }
 
-  // Wave open state: driven by current time (autoOpenWave handles it)
+  // All waves start closed — autoOpenWave opens the right one
   WAVES.forEach((_,i)=>{ waveOpen[i]=false; missingOpen[i]=false; });
-  autoOpenWave();
 
   // Load state from server
   await fetchState();
@@ -203,6 +202,9 @@ async function bootApp(){
   render();
 
   // Change #2: Start Slack late alert interval (manager only)
+  // Re-check wave open state every 30s (catches wave time crossings)
+  setInterval(()=>{ autoOpenWave(); }, 30000);
+
   if(ROLE==='manager'){
     setInterval(checkSlackLateAlerts, 30000);
     // Run once immediately after boot
@@ -672,26 +674,40 @@ function bindCards(c){
 
 // ── Main render ───────────────────────────────────────────────────────────────
 // ── Auto-open active wave by time ─────────────────────────────────────────────
-let lastAutoWave = -1;
+let lastAutoWave = -2; // -2 = uninitialised, -1 = before first wave
 function autoOpenWave(){
-  const now = new Date();
-  const nowMin = now.getHours()*60 + now.getMinutes();
-  // Find the last wave whose time has passed (most recent started wave)
+  const nowMin = new Date().getHours()*60 + new Date().getMinutes();
+  // Active wave = wave whose time has passed but next wave hasn't started yet
+  // -1 means no wave has started yet → all closed
   let active = -1;
   WAVES.forEach((w,i)=>{
-    if(wMin(w.time) <= nowMin) active = i;
+    const start = wMin(w.time);
+    const end   = (i+1 < WAVES.length) ? wMin(WAVES[i+1].time) : 9999;
+    if(nowMin >= start && nowMin < end) active = i;
   });
-  // If no wave has started yet, open the first
-  if(active === -1) active = 0;
-  // Only update waveOpen when the active wave changes
-  if(active !== lastAutoWave){
-    lastAutoWave = active;
-    WAVES.forEach((_,i)=>{ waveOpen[i] = (i === active); });
-  }
+  // Only animate when active wave actually changes
+  if(active === lastAutoWave) return;
+  lastAutoWave = active;
+  WAVES.forEach((_,i)=>{ waveOpen[i] = (i === active); });
+  // Animate accordion panels if DOM is already rendered
+  animateWaves();
+}
+
+function animateWaves(){
+  const hdrs   = document.querySelectorAll('.wave-acc-hdr');
+  const bodies = document.querySelectorAll('.wave-acc-body');
+  WAVES.forEach((_,i)=>{
+    if(!hdrs[i]||!bodies[i]) return;
+    const shouldOpen = !!waveOpen[i];
+    const isOpen     = bodies[i].classList.contains('open');
+    if(shouldOpen === isOpen) return; // already correct, don't re-trigger
+    hdrs[i].classList.toggle('open', shouldOpen);
+    bodies[i].classList.toggle('open', shouldOpen);
+  });
 }
 
 function renderMain(){
-  autoOpenWave();
+  autoOpenWave(); // recalculate which wave should be open
   const mc=document.getElementById('mc');
   if(searchQ){
     let html='<div class="srwrap">'; let found=0;
@@ -727,15 +743,18 @@ function renderMain(){
     </div></div>`;
   });
   mc.innerHTML=html; bindCards(mc);
+  animateWaves(); // apply open/close classes after DOM rebuild
 }
 function toggleWave(i){
   waveOpen[i]=!waveOpen[i];
-  const hdrs=document.querySelectorAll('.wave-acc-hdr');
-  const bodies=document.querySelectorAll('.wave-acc-body');
-  if(hdrs[i]&&bodies[i]){
-    hdrs[i].classList.toggle('open',waveOpen[i]);
-    bodies[i].classList.toggle('open',waveOpen[i]);
+  const hdr  =document.querySelectorAll('.wave-acc-hdr')[i];
+  const body =document.querySelectorAll('.wave-acc-body')[i];
+  if(hdr&&body){
+    hdr.classList.toggle('open',waveOpen[i]);
+    body.classList.toggle('open',waveOpen[i]);
   }
+  // Mark as manually overridden so autoOpenWave doesn't fight it this cycle
+  lastAutoWave = lastAutoWave; // no-op keeps lastAutoWave stable
 }
 
 // ── Sound ─────────────────────────────────────────────────────────────────────
