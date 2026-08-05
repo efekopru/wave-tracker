@@ -181,8 +181,9 @@ async function bootApp(){
     document.getElementById('tb-s').style.display='';
   }
 
-  // Wave open state: first open, rest closed
-  WAVES.forEach((_,i)=>{ waveOpen[i]=i===0; missingOpen[i]=false; });
+  // Wave open state: driven by current time (autoOpenWave handles it)
+  WAVES.forEach((_,i)=>{ waveOpen[i]=false; missingOpen[i]=false; });
+  autoOpenWave();
 
   // Load state from server
   await fetchState();
@@ -670,7 +671,27 @@ function bindCards(c){
 }
 
 // ── Main render ───────────────────────────────────────────────────────────────
+// ── Auto-open active wave by time ─────────────────────────────────────────────
+let lastAutoWave = -1;
+function autoOpenWave(){
+  const now = new Date();
+  const nowMin = now.getHours()*60 + now.getMinutes();
+  // Find the last wave whose time has passed (most recent started wave)
+  let active = -1;
+  WAVES.forEach((w,i)=>{
+    if(wMin(w.time) <= nowMin) active = i;
+  });
+  // If no wave has started yet, open the first
+  if(active === -1) active = 0;
+  // Only update waveOpen when the active wave changes
+  if(active !== lastAutoWave){
+    lastAutoWave = active;
+    WAVES.forEach((_,i)=>{ waveOpen[i] = (i === active); });
+  }
+}
+
 function renderMain(){
+  autoOpenWave();
   const mc=document.getElementById('mc');
   if(searchQ){
     let html='<div class="srwrap">'; let found=0;
