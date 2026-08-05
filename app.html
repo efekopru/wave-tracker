@@ -108,8 +108,8 @@ aside.collapsed .sidebar-toggle svg{transform:rotate(180deg);}
 .wave-accordion{background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);margin-bottom:10px;overflow:hidden;box-shadow:var(--shadow);}
 .wave-acc-hdr{display:flex;align-items:center;padding:11px 15px;cursor:pointer;background:none;border:none;width:100%;color:var(--text);font-family:inherit;gap:10px;transition:background var(--tr);}
 .wave-acc-hdr:hover,.wave-acc-hdr.open{background:var(--surface2);}
-.wave-acc-body{display:none;}
-.wave-acc-body.open{display:block;}
+.wave-acc-body{overflow:hidden;max-height:0;transition:max-height .35s cubic-bezier(.4,0,.2,1);}
+.wave-acc-body.open{max-height:4000px;transition:max-height .5s cubic-bezier(.4,0,.2,1);}
 .wah-time{font-size:.86rem;font-weight:700;letter-spacing:-.015em;}
 .wah-prog{margin-left:auto;display:flex;align-items:center;gap:8px;}
 .wah-plbl{font-size:.73rem;color:var(--subtext);font-weight:500;}

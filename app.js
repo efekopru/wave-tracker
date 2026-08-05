@@ -469,7 +469,7 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .wave-accordion{margin-bottom:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);}
 .wave-acc-hdr{display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer;background:var(--surface);border:none;width:100%;text-align:left;color:var(--text);user-select:none;}
 .wave-acc-hdr:hover{background:var(--surface2);}
-.wah-chev{font-size:.65rem;color:var(--subtext);transition:transform .2s;flex-shrink:0;}
+.wah-chev{font-size:.65rem;color:var(--subtext);transition:transform .3s cubic-bezier(.4,0,.2,1);flex-shrink:0;}
 .wave-acc-hdr.open .wah-chev{transform:rotate(90deg);}
 .wah-time{font-weight:700;font-size:.95rem;min-width:90px;}
 .wah-prog{flex:1;}
@@ -728,7 +728,15 @@ function renderMain(){
   });
   mc.innerHTML=html; bindCards(mc);
 }
-function toggleWave(i){ waveOpen[i]=!waveOpen[i]; renderMain(); }
+function toggleWave(i){
+  waveOpen[i]=!waveOpen[i];
+  const hdrs=document.querySelectorAll('.wave-acc-hdr');
+  const bodies=document.querySelectorAll('.wave-acc-body');
+  if(hdrs[i]&&bodies[i]){
+    hdrs[i].classList.toggle('open',waveOpen[i]);
+    bodies[i].classList.toggle('open',waveOpen[i]);
+  }
+}
 
 // ── Sound ─────────────────────────────────────────────────────────────────────
 function playDing(){try{const c=new(window.AudioContext||window.webkitAudioContext)(),o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.frequency.setValueAtTime(880,c.currentTime);o.frequency.exponentialRampToValueAtTime(1320,c.currentTime+.15);g.gain.setValueAtTime(.28,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.7);o.start();o.stop(c.currentTime+.7);}catch(e){}}
