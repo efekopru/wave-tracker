@@ -1,4 +1,4 @@
-﻿// DNX3 Wave Tracker — Client JS (Part 1: Auth, State, Socket, Sidebar)
+// DNX3 Wave Tracker — Client JS (Part 1: Auth, State, Socket, Sidebar)
 'use strict';
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -830,84 +830,6 @@ function getReportData(snap){
   });
 
   return {tot,tin,otdPct,lateArrivals,otdHits,waveBreakdown,dspMap};
-
-  const rv=document.getElementById('rv');
-  const snap=pastSnapshot;
-  const now=new Date();
-  const d=getReportData(snap);
-  const isSnap=!!snap;
-  const snapDate=isSnap?snap.date:'';
-
-  // In snapshot mode: read-only, no edit buttons, no Slack/export actions
-  const editBtnHtml=(key)=>(!isSnap&&ROLE==='manager')?`<button class="rpt-edit-toggle${rptEditMode[key]?' active':''}" data-key="${key}" onclick="event.stopPropagation();toggleRptEdit(this.dataset.key)">${rptEditMode[key]?'\u2713 Done':'\u270f\ufe0f Edit'}</button>`:'';
-
-  // Snapshot banner
-  const snapBanner=isSnap?`<div class="snap-banner">\ud83d\udcc2 Viewing past report: <strong>${snapDate}</strong> <button class="rabtn" style="margin-left:12px;padding:3px 10px;font-size:.72rem;" onclick="clearPastReport()">\u2190 Back to Live</button></div>`:'';
-
-  // Load past report button (always shown at top)
-  const loadBtn=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
-    ${!isSnap?`<span class="rpt-title">\ud83d\udccb End of Day Yard Breakdown</span>`:`<span class="rpt-title" style="color:var(--subtext);">\ud83d\udcc2 Past Report</span>`}
-    <button class="rabtn" style="margin-left:auto;font-size:.72rem;padding:4px 11px;" onclick="document.getElementById('past-report-file').click()">\ud83d\udcc2 Load Past Report</button>
-    <input type="file" id="past-report-file" accept=".json" style="display:none;" onchange="loadPastReport(event)"/>
-  </div>`;
-
-  const dateLabel=isSnap
-    ? snap.date
-    : now.toLocaleDateString('en-GB',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
-
-  rv.innerHTML=`${loadBtn}
-  ${snapBanner}
-  <div class="rpt-sub">DNX3 \u00b7 ${dateLabel}</div>
-
-  <!-- Overview Summary -->
-  <div class="rsec"><div class="rsec-title">Overview Summary</div><div class="sgrid">
-    <div class="sstat"><div class="sval sv-blue">${d.tot}</div><div class="slbl">Total Routes</div></div>
-    <div class="sstat"><div class="sval sv-red">${d.lateArrivals.length}</div><div class="slbl">Late Entries</div></div>
-    <div class="sstat"><div class="sval sv-amber">${d.otdHits.length}</div><div class="slbl">OTD Hits</div></div>
-    <div class="sstat"><div class="sval ${d.otdPct>=98?'sv-green':d.otdPct>=95?'sv-amber':'sv-red'}">${d.otdPct}%</div><div class="slbl">Expected OTD</div></div>
-  </div></div>
-
-  <!-- Wave Breakdown -->
-  <div class="rsec"><div class="rsec-title">Wave Breakdown</div><table class="rtbl">
-    <thead><tr><th>Wave Time</th><th>Total Routes</th><th>Late Entries</th><th>OTD Hits</th></tr></thead>
-    <tbody>${d.waveBreakdown.map(w=>`<tr><td><strong>${w.time}</strong></td><td>${w.total}</td><td>${w.late>0?`<span style="color:var(--red)">${w.late}</span>`:'<span style="color:var(--green)">0</span>'}</td><td>${w.otd>0?`<span style="color:#d97706;font-weight:700">${w.otd} \ud83c\udfaf</span>`:'<span style="color:var(--subtext)">0</span>'}</td></tr>`).join('')}</tbody>
-  </table></div>
-
-  <!-- DSP Performance -->
-  <div class="rsec"><div class="rsec-title">DSP Performance</div><table class="rtbl">
-    <thead><tr><th>DSP</th><th>Total Routes</th><th>Late Entries</th><th>OTD Hits</th></tr></thead>
-    <tbody>${Object.entries(d.dspMap).sort((a,b)=>a[0].localeCompare(b[0])).map(([name,v])=>{
-      return`<tr><td><strong>${name}</strong></td><td>${v.total}</td><td>${v.late>0?`<span style="color:var(--red)">${v.late}</span>`:'<span style="color:var(--green)">0</span>'}</td><td>${v.otd>0?`<span style="color:#d97706;font-weight:700">${v.otd} \ud83c\udfaf</span>`:'<span style="color:var(--subtext)">0</span>'}</td></tr>`;
-    }).join('')}</tbody>
-  </table></div>
-
-  <!-- Late Arrivals (collapsible, editable only in live mode) -->
-  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.late?' open':''}" onclick="toggleRptSec('late')"><span class="coll-chev">\u25b6</span> \u23f0 Late Arrivals (${d.lateArrivals.length}) ${editBtnHtml('late')}</div>
-  <div class="rsec-body${rptCollapse.late?' open':''}" id="rpt-late">${d.lateArrivals.length===0?'<div class="empty-sec">\u2705 No late arrivals!</div>':`<table class="rtbl">
-    <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th>${!isSnap?'<th>Edit Time</th><th></th>':''}</tr></thead>
-    <tbody>${d.lateArrivals.map(l=>`<tr><td>${l.waveTime}</td><td><strong>${l.route}</strong></td><td>${l.dsp}</td><td><span style="color:#dc2626;font-weight:600">${l.checkinTime}</span> <span style="color:var(--subtext);font-size:.65rem">(+${l.delay}min)</span></td>${!isSnap?`<td><input type="time" class="rpt-time-input" value="${l.checkinTime}" data-wi2="${l.waveIdx}" data-r2="${l.route}" onchange="rptEditLateTime(+this.dataset.wi2,this.dataset.r2,this.value)"></td><td><button class="rpt-x-btn" data-wi="${l.waveIdx}" data-r="${l.route}" data-wt="${l.waveTime}" onclick="rptUncheckLate(+this.dataset.wi,this.dataset.r,this.dataset.wt)" title="Remove (set on-time)">\u2715</button></td>`:''}</tr>`).join('')}</tbody>
-  </table>`}${(!isSnap&&rptEditMode.late)?`<textarea class="rpt-edit-area" id="rpt-edit-late" placeholder="Add annotations for late arrivals..." oninput="rptEdits.late=this.value">${rptEdits.late}</textarea>`:''}</div></div>
-
-  <!-- OTD Hits (collapsible, editable only in live mode) -->
-  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.otd?' open':''}" onclick="toggleRptSec('otd')"><span class="coll-chev">\u25b6</span> \ud83c\udfaf OTD Hits (${d.otdHits.length}) ${editBtnHtml('otd')}</div>
-  <div class="rsec-body${rptCollapse.otd?' open':''}" id="rpt-otd">${d.otdHits.length===0?'<div class="empty-sec">No OTD hits marked yet.</div>':`<table class="rtbl">
-    <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th><th>Reason</th>${!isSnap?'<th></th>':''}</tr></thead>
-    <tbody>${d.otdHits.map(o=>`<tr><td>${o.waveTime}</td><td><strong>${o.route}</strong></td><td>${o.dsp}</td><td>${o.checkinTime}</td><td>${!isSnap?`<input type="text" class="rpt-reason-input" value="${(o.noteText||'').replace(/"/g,'&quot;')}" placeholder="Add reason..." data-r3="${o.route}" onchange="rptEditOtdReason(this.dataset.r3,this.value)">`:(o.noteText||'\u2014')}</td>${!isSnap?`<td><button class="rpt-x-btn" data-r="${o.route}" onclick="rptUncheckOtd(this.dataset.r)" title="Remove OTD">\u2715</button></td>`:''}</tr>`).join('')}</tbody>
-  </table>`}${(!isSnap&&rptEditMode.otd)?`<textarea class="rpt-edit-area" id="rpt-edit-otd" placeholder="Add annotations for OTD hits..." oninput="rptEdits.otd=this.value">${rptEdits.otd}</textarea>`:''}</div></div>
-
-  <!-- Report Notes (live mode only) -->
-  ${(!isSnap&&ROLE==='manager')?`<div class="rpt-notes-sec">
-    <div class="rpt-notes-title">\ud83d\udcdd Report Notes</div>
-    <textarea class="rpt-notes-area" id="rpt-notes-area" placeholder="Add general report notes, comments, or context..." oninput="rptEdits.reportNotes=this.value">${rptEdits.reportNotes}</textarea>
-  </div>`:''}
-
-  <!-- Actions -->
-  <div class="rsec"><div class="ractions">
-    <button class="rabtn pri" onclick="downloadRpt()">\u2b07\ufe0f Download .txt</button>
-    <button class="rabtn" onclick="copyRpt()">\ud83d\udccb Copy</button>
-    ${(!isSnap&&ROLE==='manager')?'<button class="rabtn" onclick="submitRptToSlack()">\ud83d\udce4 Submit to Slack</button>':''}
-    ${(!isSnap&&ROLE==='manager')?'<button class="rabtn" onclick="exportDayData()">\ud83d\udcbe Export Day Data</button>':''}
-  </div></div>`;
 }
 
 // ── Report: Edit late time ───────────────────────────────────────────────────
