@@ -697,23 +697,24 @@ function slideWave(body, hdr, open){
   if(open){
     hdr.classList.add('open');
     body.classList.add('open');
-    // Temporarily show at full auto height to measure real scrollHeight
     body.style.transition='none';
     body.style.height='auto';
     const h=body.scrollHeight;
-    // Snap back to 0 and let the transition run to the measured height
     body.style.height='0';
-    body.getBoundingClientRect(); // force reflow
+    body.getBoundingClientRect();
     body.style.transition='';
     body.style.height=h+'px';
     body.addEventListener('transitionend',function done(){
       body.removeEventListener('transitionend',done);
-      body.style.height='auto'; // allow free growth after open
+      body.style.height='auto';
     },{once:true});
   } else {
-    // Lock to current pixel height first, then animate to 0
-    body.style.height=body.scrollHeight+'px';
+    // offsetHeight works even when height is 'auto'
+    const h=body.offsetHeight;
+    body.style.transition='none';
+    body.style.height=h+'px';
     body.getBoundingClientRect();
+    body.style.transition='';
     body.style.height='0';
     hdr.classList.remove('open');
     body.classList.remove('open');
