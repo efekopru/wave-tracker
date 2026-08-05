@@ -9,8 +9,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
 :root{
-  --green:#1db954;--green-bg:rgba(29,185,84,.1);--green-border:rgba(29,185,84,.3);
-  --red:#ff453a;--red-bg:rgba(255,69,58,.1);--red-border:rgba(255,69,58,.3);
+  --green:#16a34a;--green-bg:rgba(22,163,74,.14);--green-border:rgba(22,163,74,.5);--green-text:#14532d;
+  --red:#dc2626;--red-bg:rgba(220,38,38,.12);--red-border:rgba(220,38,38,.5);--red-text:#7f1d1d;
   --yellow:#ff9f0a;--yellow-bg:rgba(255,159,10,.1);--yellow-border:rgba(255,159,10,.3);
   --blue:#0a84ff;--blue-bg:rgba(10,132,255,.1);--blue-border:rgba(10,132,255,.3);
   --bg:#f2f2f7;--surface:rgba(255,255,255,.9);--surface2:rgba(242,242,247,.8);
@@ -27,8 +27,8 @@
   --surface-solid:#1c1c1e;--border:rgba(255,255,255,.09);--border2:rgba(255,255,255,.15);
   --text:#f5f5f7;--subtext:#98989d;--subtext2:#48484a;
   --header-bg:rgba(22,22,24,.85);
-  --green-bg:rgba(29,185,84,.14);--green-border:rgba(29,185,84,.32);
-  --red-bg:rgba(255,69,58,.14);--red-border:rgba(255,69,58,.32);
+  --green:#22c55e;--green-bg:rgba(34,197,94,.2);--green-border:rgba(34,197,94,.55);--green-text:#bbf7d0;
+  --red:#f87171;--red-bg:rgba(248,113,113,.17);--red-border:rgba(248,113,113,.55);--red-text:#fecaca;
   --yellow-bg:rgba(255,159,10,.14);--yellow-border:rgba(255,159,10,.32);
   --blue-bg:rgba(10,132,255,.14);--blue-border:rgba(10,132,255,.32);
   --shadow:0 1px 12px rgba(0,0,0,.5),0 4px 24px rgba(0,0,0,.35);
@@ -121,17 +121,21 @@ aside.collapsed .sidebar-toggle svg{transform:rotate(180deg);}
 /* ROUTE GRID */
 .rgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:7px;padding:10px;}
 /* ROUTE CARDS */
-.rcard{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:11px 12px;cursor:pointer;transition:transform var(--tr),box-shadow var(--tr),background var(--tr),border-color var(--tr);position:relative;overflow:hidden;}
-.rcard::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--border2);border-radius:0;transition:background var(--tr);}
+.rcard{background:var(--surface2);border:1.5px solid var(--border);border-radius:var(--radius-sm);padding:11px 12px;cursor:pointer;transition:transform var(--tr),box-shadow var(--tr),background var(--tr),border-color var(--tr);position:relative;overflow:hidden;}
+.rcard::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;border-radius:0;transition:background var(--tr);background:var(--border2);}
 .rcard:hover{transform:translateY(-1px);box-shadow:var(--shadow);}
 .rcard:active{transform:scale(.97);}
-.rcard.checked{background:var(--green-bg);border-color:var(--green-border);}
-.rcard.checked::before{background:var(--green);}
-.rcard.dimmed{opacity:.35;pointer-events:none;}
-.rcard.otd-flagged{background:var(--red-bg);border-color:var(--red-border);}
-.rcard.otd-flagged::before{background:var(--red);}
-.rcard.staging-ac::before{background:var(--red);}
+.rcard.staging-bd{background:var(--green-bg);border-color:var(--green-border);}
 .rcard.staging-bd::before{background:var(--green);}
+.rcard.staging-bd .cr{color:var(--green-text);font-weight:700;}
+.rcard.staging-ac{background:var(--red-bg);border-color:var(--red-border);}
+.rcard.staging-ac::before{background:var(--red);}
+.rcard.staging-ac .cr{color:var(--red-text);font-weight:700;}
+.rcard.checked{background:rgba(22,163,74,.22)!important;border-color:var(--green-border)!important;opacity:.65;}
+.rcard.checked::before{background:var(--green)!important;}
+.rcard.dimmed{opacity:.2;pointer-events:none;}
+.rcard.otd-flagged{background:rgba(220,38,38,.2)!important;border-color:var(--red-border)!important;}
+.rcard.otd-flagged::before{background:var(--red)!important;}
 .cr{font-size:.81rem;font-weight:700;letter-spacing:-.015em;margin-bottom:2px;}
 .cs{font-size:.66rem;color:var(--subtext);font-weight:500;}
 .ck{font-size:.69rem;font-weight:600;color:var(--green);margin-top:4px;}
