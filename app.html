@@ -77,11 +77,15 @@ header{background:var(--header-bg);backdrop-filter:saturate(180%) blur(20px);-we
 .sync-status{font-size:.64rem;color:var(--subtext);display:flex;align-items:center;gap:2px;}
 /* HEADER SEARCH */
 .hsearch-wrap{display:flex;align-items:center;position:relative;}
+header.search-open .tab-pills{opacity:0;pointer-events:none;max-width:0;overflow:hidden;margin:0;padding:0;border:none;transition:max-width .28s cubic-bezier(.4,0,.2,1),opacity .2s,margin .28s;}
+.tab-pills{transition:max-width .28s cubic-bezier(.4,0,.2,1),opacity .2s,margin .28s;max-width:400px;}
+header.search-open .sync-status{opacity:0;pointer-events:none;max-width:0;overflow:hidden;transition:max-width .28s,opacity .2s;}
+.sync-status{transition:max-width .28s,opacity .2s;max-width:200px;}
 .hsearch-btn{background:var(--surface2);border:1px solid var(--border);color:var(--subtext);border-radius:8px;padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background var(--tr),color var(--tr),border-color var(--tr);width:30px;height:30px;flex-shrink:0;z-index:2;}
 .hsearch-btn:hover{background:var(--surface-solid);color:var(--text);}
 .hsearch-btn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
 .hsearch-input{position:absolute;right:0;width:0;padding:0;border:1.5px solid transparent;border-radius:8px;font-size:.78rem;font-family:inherit;background:var(--surface-solid);color:var(--text);outline:none;opacity:0;pointer-events:none;transition:width .28s cubic-bezier(.4,0,.2,1),opacity .2s,border-color .2s,padding .28s cubic-bezier(.4,0,.2,1);box-shadow:none;}
-.hsearch-wrap.open .hsearch-input{width:190px;padding:6px 10px 6px 32px;border-color:var(--accent);opacity:1;pointer-events:all;box-shadow:0 0 0 3px rgba(10,132,255,.1);}
+.hsearch-wrap.open .hsearch-input{width:220px;padding:6px 10px 6px 32px;border-color:var(--accent);opacity:1;pointer-events:all;box-shadow:0 0 0 3px rgba(10,132,255,.1);}
 .hsearch-wrap.open .hsearch-btn{border-color:var(--accent);color:var(--accent);background:var(--blue-bg);}
 .hsearch-lupe{position:absolute;right:0;display:flex;align-items:center;justify-content:center;width:30px;height:30px;pointer-events:none;z-index:3;transition:right .28s cubic-bezier(.4,0,.2,1);}
 .hsearch-wrap.open .hsearch-lupe{right:160px;}
