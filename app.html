@@ -75,18 +75,11 @@ header{background:var(--header-bg);backdrop-filter:saturate(180%) blur(20px);-we
 .sync-dot{width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block;margin-right:4px;flex-shrink:0;}
 .sync-dot.off{background:var(--red);}
 .sync-status{font-size:.64rem;color:var(--subtext);display:flex;align-items:center;gap:2px;}
-/* HEADER SEARCH */
-.hsearch-wrap{display:flex;align-items:center;position:relative;}
-.hsearch-btn{background:var(--surface2);border:1px solid var(--border);color:var(--subtext);border-radius:8px;padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background var(--tr),color var(--tr),border-color var(--tr);width:30px;height:30px;flex-shrink:0;z-index:2;}
-.hsearch-btn:hover{background:var(--surface-solid);color:var(--text);}
-.hsearch-btn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
-.hsearch-input{position:absolute;left:0;width:0;padding:0;border:1.5px solid transparent;border-radius:8px;font-size:.78rem;font-family:inherit;background:var(--surface-solid);color:var(--text);outline:none;opacity:0;pointer-events:none;transition:width .28s cubic-bezier(.4,0,.2,1),opacity .2s,border-color .2s,padding .28s cubic-bezier(.4,0,.2,1);box-shadow:none;}
-.hsearch-wrap.open .hsearch-input{width:220px;padding:6px 10px 6px 32px;border-color:var(--accent);opacity:1;pointer-events:all;box-shadow:0 0 0 3px rgba(10,132,255,.1);}
-.hsearch-wrap.open .hsearch-btn{border-color:var(--accent);color:var(--accent);background:var(--blue-bg);}
-.hsearch-lupe{position:absolute;left:0;display:flex;align-items:center;justify-content:center;width:30px;height:30px;pointer-events:none;z-index:3;transition:left .28s cubic-bezier(.4,0,.2,1);}
-.hsearch-wrap.open .hsearch-lupe{left:0;}
-.hsearch-lupe svg{width:13px;height:13px;fill:none;stroke:var(--subtext);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
-.hsearch-wrap.open .hsearch-lupe svg{stroke:var(--accent);}
+/* HEADER SEARCH (inline tab) */
+.tab-search{height:26px;padding:0 10px;border:1.5px solid var(--border);border-radius:8px;font-size:.73rem;font-family:inherit;background:var(--surface-solid);color:var(--text);outline:none;width:140px;transition:border-color .2s,box-shadow .2s;}
+.tab-search:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(10,132,255,.12);}
+.tab-search::placeholder{color:var(--subtext);}
+
 /* LAYOUT */
 .layout{display:flex;flex:1;overflow:hidden;}
 /* SIDEBAR */
@@ -304,21 +297,13 @@ aside.collapsed .sidebar-toggle svg{transform:rotate(180deg);}
 <!-- HEADER -->
 <header id="main-header" style="display:none">
   <div><div class="logo">DNX3 &mdash; Wave Tracker</div><div class="subtitle">CYCLE 1 &middot; Tap to check in</div></div>
-  <!-- Animated search — left of nav -->
-  <div class="hsearch-wrap" id="hsearch-wrap">
-    <button class="hsearch-btn" id="hsearch-btn" onclick="toggleHeaderSearch()" title="Search routes">
-      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    </button>
-    <div class="hsearch-lupe">
-      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    </div>
-    <input type="text" class="hsearch-input" id="si" placeholder="Search routes..." oninput="onSearch()" autocomplete="off"/>
-  </div>
+
   <div class="hright">
     <div class="sync-status"><span class="sync-dot" id="sync-dot"></span><span id="sync-lbl">Connecting...</span></div>
     <span class="role-badge" id="role-badge"></span>
     <div class="tab-pills">
       <button class="tab-btn active" id="tb-t" onclick="switchTab('t')">Live Tracker</button>
+      <input type="text" class="tab-search" id="si" placeholder="🔍 Search..." oninput="onSearch()" autocomplete="off"/>
       <button class="tab-btn" id="tb-r" onclick="switchTab('r')" style="display:none">Report</button>
       <button class="tab-btn" id="tb-i" onclick="switchTab('i')" style="display:none">Import</button>
       <button class="tab-btn" id="tb-s" onclick="switchTab('s')" style="display:none">Settings</button>

@@ -79,22 +79,7 @@ function toggleDark(){
   document.getElementById('dark-btn').textContent=dark?'☀️':'🌙';
 }
 
-// ── Header search toggle ─────────────────────────────────────────────────────
-function toggleHeaderSearch(){
-  const wrap=document.getElementById('hsearch-wrap');
-  const inp=document.getElementById('si');
-  if(!wrap)return;
-  const isOpen=wrap.classList.contains('open');
-  if(isOpen){
-    wrap.classList.remove('open');
-    inp.value='';
-    searchQ='';
-    renderMain();
-  } else {
-    wrap.classList.add('open');
-    setTimeout(()=>inp.focus(),30);
-  }
-}
+
 
 // ── Sidebar toggle ───────────────────────────────────────────────────────────
 let sidebarOpen=true;
@@ -372,8 +357,14 @@ function connectSocket(){
 // ── Search (Change #5: clear on blur) ─────────────────────────────────────────
 function onSearch(){ searchQ=expandSearch(document.getElementById('si').value); renderMain(); }
 document.addEventListener('keydown',e=>{
-  if(e.key==='/'&&document.activeElement!==document.getElementById('si')){e.preventDefault();const w=document.getElementById('hsearch-wrap');if(w)w.classList.add('open');document.getElementById('si').focus();}
-  if(e.key==='Escape'){const w=document.getElementById('hsearch-wrap');if(w)w.classList.remove('open');document.getElementById('si').value='';searchQ='';renderMain();closeNotePanel();}
+  if(e.key==='/'&&document.activeElement!==document.getElementById('si')){
+    e.preventDefault();
+    document.getElementById('si').focus();
+  }
+  if(e.key==='Escape'){
+    clearSearch();
+    document.getElementById('si').blur();
+  }
 });
 
 // ── clearSearch helper (replaces old blur-to-clear) ──────────────────────────
