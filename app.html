@@ -109,14 +109,13 @@ aside.collapsed .sidebar-toggle svg{transform:rotate(180deg);}
 .wave-accordion{background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);margin-bottom:10px;overflow:hidden;box-shadow:var(--shadow);}
 .wave-acc-hdr{display:flex;align-items:center;padding:11px 15px;cursor:pointer;background:none;border:none;width:100%;color:var(--text);font-family:inherit;gap:10px;transition:background var(--tr);}
 .wave-acc-hdr:hover,.wave-acc-hdr.open{background:var(--surface2);}
-.wave-acc-body{overflow:hidden;max-height:0;transition:max-height .35s cubic-bezier(.4,0,.2,1);}
-.wave-acc-body.open{max-height:4000px;transition:max-height .5s cubic-bezier(.4,0,.2,1);}
+.wave-acc-body{overflow:hidden;height:0;transition:height .32s cubic-bezier(.4,0,.2,1);}
 .wah-time{font-size:.86rem;font-weight:700;letter-spacing:-.015em;}
 .wah-prog{margin-left:auto;display:flex;align-items:center;gap:8px;}
 .wah-plbl{font-size:.73rem;color:var(--subtext);font-weight:500;}
 .wah-bar-w{width:72px;height:4px;background:var(--border2);border-radius:999px;overflow:hidden;}
 .wah-bar{height:100%;border-radius:999px;background:var(--green);transition:width .4s ease;}
-.wah-chev{font-size:.55rem;color:var(--subtext2);transition:transform .2s;margin-left:4px;}
+.wah-chev{font-size:.55rem;color:var(--subtext2);transition:transform .32s cubic-bezier(.4,0,.2,1);margin-left:4px;}
 .wave-acc-hdr.open .wah-chev{transform:rotate(90deg);}
 .wah-badges{display:flex;gap:4px;}
 /* ROUTE GRID */

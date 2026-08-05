@@ -471,7 +471,7 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .wave-accordion{margin-bottom:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);}
 .wave-acc-hdr{display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer;background:var(--surface);border:none;width:100%;text-align:left;color:var(--text);user-select:none;}
 .wave-acc-hdr:hover{background:var(--surface2);}
-.wah-chev{font-size:.65rem;color:var(--subtext);transition:transform .3s cubic-bezier(.4,0,.2,1);flex-shrink:0;}
+.wah-chev{font-size:.65rem;color:var(--subtext);transition:transform .32s cubic-bezier(.4,0,.2,1);flex-shrink:0;}
 .wave-acc-hdr.open .wah-chev{transform:rotate(90deg);}
 .wah-time{font-weight:700;font-size:.95rem;min-width:90px;}
 .wah-prog{flex:1;}
@@ -693,16 +693,36 @@ function autoOpenWave(){
   animateWaves();
 }
 
+function slideWave(body, hdr, open){
+  if(open){
+    body.style.height='0';
+    body.getBoundingClientRect(); // force reflow
+    const h=body.scrollHeight;
+    body.style.height=h+'px';
+    body.addEventListener('transitionend',function done(){
+      body.removeEventListener('transitionend',done);
+      body.style.height='auto';
+    },{once:true});
+    hdr.classList.add('open');
+    body.classList.add('open');
+  } else {
+    body.style.height=body.scrollHeight+'px';
+    body.getBoundingClientRect();
+    body.style.height='0';
+    hdr.classList.remove('open');
+    body.classList.remove('open');
+  }
+}
+
 function animateWaves(){
-  const hdrs   = document.querySelectorAll('.wave-acc-hdr');
-  const bodies = document.querySelectorAll('.wave-acc-body');
+  const hdrs  =document.querySelectorAll('.wave-acc-hdr');
+  const bodies=document.querySelectorAll('.wave-acc-body');
   WAVES.forEach((_,i)=>{
-    if(!hdrs[i]||!bodies[i]) return;
-    const shouldOpen = !!waveOpen[i];
-    const isOpen     = bodies[i].classList.contains('open');
-    if(shouldOpen === isOpen) return; // already correct, don't re-trigger
-    hdrs[i].classList.toggle('open', shouldOpen);
-    bodies[i].classList.toggle('open', shouldOpen);
+    if(!hdrs[i]||!bodies[i])return;
+    const shouldOpen=!!waveOpen[i];
+    const isOpen=bodies[i].classList.contains('open');
+    if(shouldOpen===isOpen)return;
+    slideWave(bodies[i],hdrs[i],shouldOpen);
   });
 }
 
@@ -749,12 +769,7 @@ function toggleWave(i){
   waveOpen[i]=!waveOpen[i];
   const hdr  =document.querySelectorAll('.wave-acc-hdr')[i];
   const body =document.querySelectorAll('.wave-acc-body')[i];
-  if(hdr&&body){
-    hdr.classList.toggle('open',waveOpen[i]);
-    body.classList.toggle('open',waveOpen[i]);
-  }
-  // Mark as manually overridden so autoOpenWave doesn't fight it this cycle
-  lastAutoWave = lastAutoWave; // no-op keeps lastAutoWave stable
+  if(hdr&&body) slideWave(body,hdr,waveOpen[i]);
 }
 
 // ── Sound ─────────────────────────────────────────────────────────────────────
