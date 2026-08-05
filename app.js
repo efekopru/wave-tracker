@@ -77,6 +77,7 @@ function toggleDark(){
   dark=!dark; document.body.classList.toggle('dark',dark);
   localStorage.setItem('dnx3_dk',dark?'1':'0');
   document.getElementById('dark-btn').textContent=dark?'☀️':'🌙';
+}
 
 // ── Header search toggle ─────────────────────────────────────────────────────
 function toggleHeaderSearch(){
