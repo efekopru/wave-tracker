@@ -77,6 +77,33 @@ function toggleDark(){
   dark=!dark; document.body.classList.toggle('dark',dark);
   localStorage.setItem('dnx3_dk',dark?'1':'0');
   document.getElementById('dark-btn').textContent=dark?'☀️':'🌙';
+
+// ── Header search toggle ─────────────────────────────────────────────────────
+function toggleHeaderSearch(){
+  const wrap=document.getElementById('hsearch-wrap');
+  const inp=document.getElementById('si');
+  if(!wrap)return;
+  const isOpen=wrap.classList.contains('open');
+  if(isOpen){
+    wrap.classList.remove('open');
+    inp.value='';
+    searchQ='';
+    renderMain();
+  } else {
+    wrap.classList.add('open');
+    setTimeout(()=>inp.focus(),30);
+  }
+}
+
+// ── Sidebar toggle ───────────────────────────────────────────────────────────
+let sidebarOpen=true;
+function toggleSidebar(){
+  const aside=document.getElementById('main-aside');
+  const layout=document.getElementById('main-layout');
+  if(!aside||!layout)return;
+  sidebarOpen=!sidebarOpen;
+  aside.classList.toggle('collapsed',!sidebarOpen);
+  layout.classList.toggle('sb-collapsed',!sidebarOpen);
 }
 if(dark)document.getElementById('dark-btn').textContent='☀️';
 
@@ -338,8 +365,8 @@ function connectSocket(){
 // ── Search (Change #5: clear on blur) ─────────────────────────────────────────
 function onSearch(){ searchQ=expandSearch(document.getElementById('si').value); renderMain(); }
 document.addEventListener('keydown',e=>{
-  if(e.key==='/'&&document.activeElement!==document.getElementById('si')){e.preventDefault();document.getElementById('si').focus();}
-  if(e.key==='Escape'){document.getElementById('si').value='';searchQ='';renderMain();closeNotePanel();}
+  if(e.key==='/'&&document.activeElement!==document.getElementById('si')){e.preventDefault();const w=document.getElementById('hsearch-wrap');if(w)w.classList.add('open');document.getElementById('si').focus();}
+  if(e.key==='Escape'){const w=document.getElementById('hsearch-wrap');if(w)w.classList.remove('open');document.getElementById('si').value='';searchQ='';renderMain();closeNotePanel();}
 });
 
 // ── clearSearch helper (replaces old blur-to-clear) ──────────────────────────
@@ -586,8 +613,12 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .preview-title{font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--subtext);padding:10px 14px 8px;border-bottom:1px solid var(--border);}
 .preview-warn{font-size:.75rem;color:#b45309;background:var(--yellow-bg);border:1px solid var(--yellow-border);border-radius:7px;padding:8px 12px;margin:12px 14px 0;}
 .preview-actions{display:flex;gap:9px;padding:12px 14px;border-top:1px solid var(--border);}
-.import-last{font-size:.72rem;color:var(--subtext);margin-top:14px;}
 @media print{header,aside{display:none!important;}#tv{display:none!important;}#rv{display:block!important;padding:0;}body{background:#fff;color:#000;height:auto;overflow:auto;}}
+.snap-banner{display:flex;align-items:center;background:var(--yellow-bg);border:1px solid var(--yellow-border);border-radius:8px;padding:9px 14px;margin-bottom:12px;font-size:.8rem;color:var(--text);}
+.rpt-time-input{padding:3px 6px;border:1px solid var(--border);border-radius:5px;font-size:.75rem;background:var(--bg);color:var(--text);width:90px;}
+.rpt-x-btn{border:none;background:none;color:var(--red);font-size:1rem;cursor:pointer;padding:0 4px;font-weight:700;}
+.rpt-x-btn:hover{color:#991b1b;}
+.rpt-reason-input{padding:4px 7px;border:1px solid var(--border);border-radius:5px;font-size:.75rem;background:var(--bg);color:var(--text);width:100%;}
 `;
 document.head.appendChild(appStyles);
 
@@ -683,24 +714,64 @@ function toggleWave(i){ waveOpen[i]=!waveOpen[i]; renderMain(); }
 // ── Sound ─────────────────────────────────────────────────────────────────────
 function playDing(){try{const c=new(window.AudioContext||window.webkitAudioContext)(),o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.frequency.setValueAtTime(880,c.currentTime);o.frequency.exponentialRampToValueAtTime(1320,c.currentTime+.15);g.gain.setValueAtTime(.28,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.7);o.start();o.stop(c.currentTime+.7);}catch(e){}}
 
-// ── Report ────────────────────────────────────────────────────────────────────
 // Report collapsible state
 let rptCollapse={late:false,otd:false};
 
+// Past snapshot — null = live view, object = viewing exported day data
+let pastSnapshot=null;
+
+function loadPastReport(evt){
+  const file=evt.target.files[0];
+  if(!file)return;
+  const reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      const data=JSON.parse(e.target.result);
+      if(!data.waves||!data.state||!data.date){showToast('\u26a0\ufe0f Invalid day data file');return;}
+      pastSnapshot=data;
+      rptEdits={late:'',otd:'',reportNotes:''};
+      rptEditMode={late:false,otd:false};
+      renderReport();
+      showToast('\ud83d\udcc2 Loaded: '+data.date);
+    }catch(err){showToast('\u26a0\ufe0f Could not read file');}
+  };
+  reader.readAsText(file);
+  evt.target.value='';
+}
+
+function clearPastReport(){
+  pastSnapshot=null;
+  rptEdits={late:'',otd:'',reportNotes:''};
+  rptEditMode={late:false,otd:false};
+  renderReport();
+}
+
 function pb(p){const cls=p===100?'pb-g':p>=80?'pb-y':'pb-r';const tag=p===100?`<span class="t100">100%</span>`:p>=80?`<span class="twarn">${p}%</span>`:`<span class="tbad">${p}%</span>`;return`${tag}<span class="pbar-w"><span class="pbar ${cls}" style="width:${p}%"></span></span>`;}
 
-function getReportData(){
-  let tot=0,tin=0;
-  WAVES.forEach((w,i)=>{tot+=w.total;tin+=inCount(i);});
+function getReportData(snap){
+  // Use snapshot data if provided, otherwise live globals
+  const snapWaves = snap ? snap.waves : WAVES;
+  const snapState = snap ? snap.state : state;
+  const snapNotes = snap ? snap.notes : notes;
 
-  // Change #1: Late arrivals — routes checked in AFTER wave time (no grace)
+  // Helper functions scoped to snapshot or live data
+  const _isIn=(wi,r)=>!!(snapState[String(wi)]&&snapState[String(wi)][r]);
+  const _inTime=(wi,r)=>snapState[String(wi)]?.[r]?.time||'';
+  const _inCount=(wi)=>Object.keys(snapState[String(wi)]||{}).length;
+  const _allR=(w)=>[...(w.green||[]),...(w.red||[])];
+  const _getNoteText=(route)=>{ const n=snapNotes[route]; if(!n)return ''; if(typeof n==='string')return n; return n.text||''; };
+  const _getNoteOtd=(route)=>{ const n=snapNotes[route]; if(!n)return false; if(typeof n==='string')return false; return !!n.otd; };
+
+  let tot=0,tin=0;
+  snapWaves.forEach((w,i)=>{tot+=w.total;tin+=_inCount(i);});
+
   const lateArrivals=[];
-  WAVES.forEach((w,i)=>{
+  snapWaves.forEach((w,i)=>{
     const waveMinutes=wMin(w.time);
     if(waveMinutes===9999)return;
-    allR(w).forEach(r=>{
-      if(!isIn(i,r.route))return;
-      const checkinStr=inTime(i,r.route);
+    _allR(w).forEach(r=>{
+      if(!_isIn(i,r.route))return;
+      const checkinStr=_inTime(i,r.route);
       if(!checkinStr)return;
       const parts=checkinStr.match(/^(\d{1,2}):(\d{2})$/);
       if(!parts)return;
@@ -712,27 +783,24 @@ function getReportData(){
   });
   lateArrivals.sort((a,b)=>b.delay-a.delay);
 
-  // OTD Hits: routes marked as OTD
   const otdHits=[];
-  WAVES.forEach((w,i)=>{
-    allR(w).forEach(r=>{
-      if(getNoteOtd(r.route)){
-        otdHits.push({waveIdx:i,waveTime:w.time,route:r.route,dsp:r.dsp,checkinTime:inTime(i,r.route)||'—',noteText:getNoteText(r.route)});
+  snapWaves.forEach((w,i)=>{
+    _allR(w).forEach(r=>{
+      if(_getNoteOtd(r.route)){
+        otdHits.push({waveIdx:i,waveTime:w.time,route:r.route,dsp:r.dsp,checkinTime:_inTime(i,r.route)||'\u2014',noteText:_getNoteText(r.route)});
       }
     });
   });
 
-  // Change #7: Fix Expected OTD = (Total - OTD Hits) / Total × 100, rounded to 2 decimal places
   const otdPct=tot>0?Math.round(((tot-otdHits.length)/tot*100)*100)/100:100;
 
-  // Wave breakdown with late/otd per wave (no grace)
-  const waveBreakdown=WAVES.map((w,i)=>{
+  const waveBreakdown=snapWaves.map((w,i)=>{
     const waveMinutes=wMin(w.time);
     let wLate=0;
     if(waveMinutes!==9999){
-      allR(w).forEach(r=>{
-        if(!isIn(i,r.route))return;
-        const ct=inTime(i,r.route);
+      _allR(w).forEach(r=>{
+        if(!_isIn(i,r.route))return;
+        const ct=_inTime(i,r.route);
         if(!ct)return;
         const p=ct.match(/^(\d{1,2}):(\d{2})$/);
         if(!p)return;
@@ -740,41 +808,56 @@ function getReportData(){
       });
     }
     let wOtd=0;
-    allR(w).forEach(r=>{ if(getNoteOtd(r.route))wOtd++; });
+    _allR(w).forEach(r=>{ if(_getNoteOtd(r.route))wOtd++; });
     return {time:w.time,total:w.total,late:wLate,otd:wOtd};
   });
 
-  // DSP breakdown with late/otd (no grace)
   const dspMap={};
-  WAVES.forEach((w,i)=>{
+  snapWaves.forEach((w,i)=>{
     const waveMinutes=wMin(w.time);
-    allR(w).forEach(r=>{
+    _allR(w).forEach(r=>{
       if(!dspMap[r.dsp])dspMap[r.dsp]={total:0,late:0,otd:0};
       dspMap[r.dsp].total++;
-      if(isIn(i,r.route)){
-        const ct=inTime(i,r.route);
+      if(_isIn(i,r.route)){
+        const ct=_inTime(i,r.route);
         if(ct&&waveMinutes!==9999){
           const p=ct.match(/^(\d{1,2}):(\d{2})$/);
           if(p&&parseInt(p[1])*60+parseInt(p[2])>waveMinutes)dspMap[r.dsp].late++;
         }
       }
-      if(getNoteOtd(r.route))dspMap[r.dsp].otd++;
+      if(_getNoteOtd(r.route))dspMap[r.dsp].otd++;
     });
   });
 
   return {tot,tin,otdPct,lateArrivals,otdHits,waveBreakdown,dspMap};
-}
 
-function renderReport(){
   const rv=document.getElementById('rv');
+  const snap=pastSnapshot;
   const now=new Date();
-  const d=getReportData();
+  const d=getReportData(snap);
+  const isSnap=!!snap;
+  const snapDate=isSnap?snap.date:'';
 
-  // Change #4: edit toggle buttons for collapsible sections
-  const editBtnHtml=(key)=>ROLE==='manager'?`<button class="rpt-edit-toggle${rptEditMode[key]?' active':''}" data-key="${key}" onclick="event.stopPropagation();toggleRptEdit(this.dataset.key)">${rptEditMode[key]?'✓ Done':'✏️ Edit'}</button>`:'';
+  // In snapshot mode: read-only, no edit buttons, no Slack/export actions
+  const editBtnHtml=(key)=>(!isSnap&&ROLE==='manager')?`<button class="rpt-edit-toggle${rptEditMode[key]?' active':''}" data-key="${key}" onclick="event.stopPropagation();toggleRptEdit(this.dataset.key)">${rptEditMode[key]?'\u2713 Done':'\u270f\ufe0f Edit'}</button>`:'';
 
-  rv.innerHTML=`<div class="rpt-title">📋 End of Day Yard Breakdown</div>
-  <div class="rpt-sub">DNX3 · ${now.toLocaleDateString('en-GB',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})}</div>
+  // Snapshot banner
+  const snapBanner=isSnap?`<div class="snap-banner">\ud83d\udcc2 Viewing past report: <strong>${snapDate}</strong> <button class="rabtn" style="margin-left:12px;padding:3px 10px;font-size:.72rem;" onclick="clearPastReport()">\u2190 Back to Live</button></div>`:'';
+
+  // Load past report button (always shown at top)
+  const loadBtn=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+    ${!isSnap?`<span class="rpt-title">\ud83d\udccb End of Day Yard Breakdown</span>`:`<span class="rpt-title" style="color:var(--subtext);">\ud83d\udcc2 Past Report</span>`}
+    <button class="rabtn" style="margin-left:auto;font-size:.72rem;padding:4px 11px;" onclick="document.getElementById('past-report-file').click()">\ud83d\udcc2 Load Past Report</button>
+    <input type="file" id="past-report-file" accept=".json" style="display:none;" onchange="loadPastReport(event)"/>
+  </div>`;
+
+  const dateLabel=isSnap
+    ? snap.date
+    : now.toLocaleDateString('en-GB',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+
+  rv.innerHTML=`${loadBtn}
+  ${snapBanner}
+  <div class="rpt-sub">DNX3 \u00b7 ${dateLabel}</div>
 
   <!-- Overview Summary -->
   <div class="rsec"><div class="rsec-title">Overview Summary</div><div class="sgrid">
@@ -787,56 +870,44 @@ function renderReport(){
   <!-- Wave Breakdown -->
   <div class="rsec"><div class="rsec-title">Wave Breakdown</div><table class="rtbl">
     <thead><tr><th>Wave Time</th><th>Total Routes</th><th>Late Entries</th><th>OTD Hits</th></tr></thead>
-    <tbody>${d.waveBreakdown.map(w=>`<tr><td><strong>${w.time}</strong></td><td>${w.total}</td><td>${w.late>0?`<span style="color:var(--red)">${w.late}</span>`:'<span style="color:var(--green)">0</span>'}</td><td>${w.otd>0?`<span style="color:#d97706;font-weight:700">${w.otd} 🎯</span>`:'<span style="color:var(--subtext)">0</span>'}</td></tr>`).join('')}</tbody>
+    <tbody>${d.waveBreakdown.map(w=>`<tr><td><strong>${w.time}</strong></td><td>${w.total}</td><td>${w.late>0?`<span style="color:var(--red)">${w.late}</span>`:'<span style="color:var(--green)">0</span>'}</td><td>${w.otd>0?`<span style="color:#d97706;font-weight:700">${w.otd} \ud83c\udfaf</span>`:'<span style="color:var(--subtext)">0</span>'}</td></tr>`).join('')}</tbody>
   </table></div>
 
   <!-- DSP Performance -->
   <div class="rsec"><div class="rsec-title">DSP Performance</div><table class="rtbl">
     <thead><tr><th>DSP</th><th>Total Routes</th><th>Late Entries</th><th>OTD Hits</th></tr></thead>
     <tbody>${Object.entries(d.dspMap).sort((a,b)=>a[0].localeCompare(b[0])).map(([name,v])=>{
-      return`<tr><td><strong>${name}</strong></td><td>${v.total}</td><td>${v.late>0?`<span style="color:var(--red)">${v.late}</span>`:'<span style="color:var(--green)">0</span>'}</td><td>${v.otd>0?`<span style="color:#d97706;font-weight:700">${v.otd} 🎯</span>`:'<span style="color:var(--subtext)">0</span>'}</td></tr>`;
+      return`<tr><td><strong>${name}</strong></td><td>${v.total}</td><td>${v.late>0?`<span style="color:var(--red)">${v.late}</span>`:'<span style="color:var(--green)">0</span>'}</td><td>${v.otd>0?`<span style="color:#d97706;font-weight:700">${v.otd} \ud83c\udfaf</span>`:'<span style="color:var(--subtext)">0</span>'}</td></tr>`;
     }).join('')}</tbody>
   </table></div>
 
-  <!-- Late Arrivals (collapsible + editable) -->
-  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.late?' open':''}" onclick="toggleRptSec('late')"><span class="coll-chev">▶</span> ⏰ Late Arrivals (${d.lateArrivals.length}) ${editBtnHtml('late')}</div>
-  <div class="rsec-body${rptCollapse.late?' open':''}" id="rpt-late">${d.lateArrivals.length===0?'<div class="empty-sec">✅ No late arrivals!</div>':`<table class="rtbl">
-    <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th><th>Edit Time</th><th></th></tr></thead>
-    <tbody>${d.lateArrivals.map(l=>`<tr><td>${l.waveTime}</td><td><strong>${l.route}</strong></td><td>${l.dsp}</td><td><span style="color:#dc2626;font-weight:600">${l.checkinTime}</span> <span style="color:var(--subtext);font-size:.65rem">(+${l.delay}min)</span></td><td><input type="time" class="rpt-time-input" value="${l.checkinTime}" data-wi2="${l.waveIdx}" data-r2="${l.route}" onchange="rptEditLateTime(+this.dataset.wi2,this.dataset.r2,this.value)"></td><td><button class="rpt-x-btn" data-wi="${l.waveIdx}" data-r="${l.route}" data-wt="${l.waveTime}" onclick="rptUncheckLate(+this.dataset.wi,this.dataset.r,this.dataset.wt)" title="Remove (set on-time)">✕</button></td></tr>`).join('')}</tbody>
-  </table>`}${rptEditMode.late?`<textarea class="rpt-edit-area" id="rpt-edit-late" placeholder="Add annotations for late arrivals..." oninput="rptEdits.late=this.value">${rptEdits.late}</textarea>`:''}</div></div>
+  <!-- Late Arrivals (collapsible, editable only in live mode) -->
+  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.late?' open':''}" onclick="toggleRptSec('late')"><span class="coll-chev">\u25b6</span> \u23f0 Late Arrivals (${d.lateArrivals.length}) ${editBtnHtml('late')}</div>
+  <div class="rsec-body${rptCollapse.late?' open':''}" id="rpt-late">${d.lateArrivals.length===0?'<div class="empty-sec">\u2705 No late arrivals!</div>':`<table class="rtbl">
+    <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th>${!isSnap?'<th>Edit Time</th><th></th>':''}</tr></thead>
+    <tbody>${d.lateArrivals.map(l=>`<tr><td>${l.waveTime}</td><td><strong>${l.route}</strong></td><td>${l.dsp}</td><td><span style="color:#dc2626;font-weight:600">${l.checkinTime}</span> <span style="color:var(--subtext);font-size:.65rem">(+${l.delay}min)</span></td>${!isSnap?`<td><input type="time" class="rpt-time-input" value="${l.checkinTime}" data-wi2="${l.waveIdx}" data-r2="${l.route}" onchange="rptEditLateTime(+this.dataset.wi2,this.dataset.r2,this.value)"></td><td><button class="rpt-x-btn" data-wi="${l.waveIdx}" data-r="${l.route}" data-wt="${l.waveTime}" onclick="rptUncheckLate(+this.dataset.wi,this.dataset.r,this.dataset.wt)" title="Remove (set on-time)">\u2715</button></td>`:''}</tr>`).join('')}</tbody>
+  </table>`}${(!isSnap&&rptEditMode.late)?`<textarea class="rpt-edit-area" id="rpt-edit-late" placeholder="Add annotations for late arrivals..." oninput="rptEdits.late=this.value">${rptEdits.late}</textarea>`:''}</div></div>
 
-  <!-- OTD Hits (collapsible + editable) -->
-  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.otd?' open':''}" onclick="toggleRptSec('otd')"><span class="coll-chev">▶</span> 🎯 OTD Hits (${d.otdHits.length}) ${editBtnHtml('otd')}</div>
+  <!-- OTD Hits (collapsible, editable only in live mode) -->
+  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.otd?' open':''}" onclick="toggleRptSec('otd')"><span class="coll-chev">\u25b6</span> \ud83c\udfaf OTD Hits (${d.otdHits.length}) ${editBtnHtml('otd')}</div>
   <div class="rsec-body${rptCollapse.otd?' open':''}" id="rpt-otd">${d.otdHits.length===0?'<div class="empty-sec">No OTD hits marked yet.</div>':`<table class="rtbl">
-    <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th><th>Reason</th><th></th></tr></thead>
-    <tbody>${d.otdHits.map(o=>`<tr><td>${o.waveTime}</td><td><strong>${o.route}</strong></td><td>${o.dsp}</td><td>${o.checkinTime}</td><td><input type="text" class="rpt-reason-input" value="${(o.noteText||'').replace(/"/g,'&quot;')}" placeholder="Add reason..." data-r3="${o.route}" onchange="rptEditOtdReason(this.dataset.r3,this.value)"></td><td><button class="rpt-x-btn" data-r="${o.route}" onclick="rptUncheckOtd(this.dataset.r)" title="Remove OTD">✕</button></td></tr>`).join('')}</tbody>
-  </table>`}${rptEditMode.otd?`<textarea class="rpt-edit-area" id="rpt-edit-otd" placeholder="Add annotations for OTD hits..." oninput="rptEdits.otd=this.value">${rptEdits.otd}</textarea>`:''}</div></div>
+    <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th><th>Reason</th>${!isSnap?'<th></th>':''}</tr></thead>
+    <tbody>${d.otdHits.map(o=>`<tr><td>${o.waveTime}</td><td><strong>${o.route}</strong></td><td>${o.dsp}</td><td>${o.checkinTime}</td><td>${!isSnap?`<input type="text" class="rpt-reason-input" value="${(o.noteText||'').replace(/"/g,'&quot;')}" placeholder="Add reason..." data-r3="${o.route}" onchange="rptEditOtdReason(this.dataset.r3,this.value)">`:(o.noteText||'\u2014')}</td>${!isSnap?`<td><button class="rpt-x-btn" data-r="${o.route}" onclick="rptUncheckOtd(this.dataset.r)" title="Remove OTD">\u2715</button></td>`:''}</tr>`).join('')}</tbody>
+  </table>`}${(!isSnap&&rptEditMode.otd)?`<textarea class="rpt-edit-area" id="rpt-edit-otd" placeholder="Add annotations for OTD hits..." oninput="rptEdits.otd=this.value">${rptEdits.otd}</textarea>`:''}</div></div>
 
-  <!-- Change #4: Report Notes textarea (manager-only) -->
-  ${ROLE==='manager'?`<div class="rpt-notes-sec">
-    <div class="rpt-notes-title">📝 Report Notes</div>
+  <!-- Report Notes (live mode only) -->
+  ${(!isSnap&&ROLE==='manager')?`<div class="rpt-notes-sec">
+    <div class="rpt-notes-title">\ud83d\udcdd Report Notes</div>
     <textarea class="rpt-notes-area" id="rpt-notes-area" placeholder="Add general report notes, comments, or context..." oninput="rptEdits.reportNotes=this.value">${rptEdits.reportNotes}</textarea>
   </div>`:''}
 
   <!-- Actions -->
   <div class="rsec"><div class="ractions">
-    <button class="rabtn pri" onclick="downloadRpt()">⬇️ Download .txt</button>
-    <button class="rabtn" onclick="copyRpt()">📋 Copy</button>
-    ${ROLE==='manager'?'<button class="rabtn" onclick="submitRptToSlack()">📤 Submit to Slack</button>':''}
-    ${ROLE==='manager'?'<button class="rabtn" onclick="exportDayData()">💾 Export Day Data</button>':''}
+    <button class="rabtn pri" onclick="downloadRpt()">\u2b07\ufe0f Download .txt</button>
+    <button class="rabtn" onclick="copyRpt()">\ud83d\udccb Copy</button>
+    ${(!isSnap&&ROLE==='manager')?'<button class="rabtn" onclick="submitRptToSlack()">\ud83d\udce4 Submit to Slack</button>':''}
+    ${(!isSnap&&ROLE==='manager')?'<button class="rabtn" onclick="exportDayData()">\ud83d\udcbe Export Day Data</button>':''}
   </div></div>`;
-}
-
-// Change #4: Toggle edit mode for report sections
-function toggleRptEdit(key){
-  rptEditMode[key]=!rptEditMode[key];
-  // If closing edit mode, keep the text
-  renderReport();
-}
-
-function toggleRptSec(key){
-  rptCollapse[key]=!rptCollapse[key];
-  renderReport();
 }
 
 // ── Report: Edit late time ───────────────────────────────────────────────────
@@ -888,97 +959,126 @@ async function rptUncheckOtd(route){
 }
 
 function buildReportText(){
-  const d=getReportData();
+  const snap=pastSnapshot;
+  const d=getReportData(snap);
   const now=new Date();
-  const dateStr=now.toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'});
-  let t=`\`\`\`\n`;
-  t+=`DNX3 End of Day Yard Breakdown\n`;
-  t+=`Date: ${dateStr}\n`;
-  t+=`${'\u2500'.repeat(50)}\n\n`;
+  const dateStr=snap
+    ? snap.date
+    : now.toLocaleDateString('en-GB',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+  const timeStr=now.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+  const SEP='\u2501'.repeat(42);
+  let t='```\n';
+  t+=`DNX3 \u2014 End of Day Yard Breakdown\n`;
+  t+=`${dateStr} \u00b7 Generated: ${timeStr}\n`;
+  t+=`${SEP}\n\n`;
 
-  t+=`OVERVIEW SUMMARY\n`;
-  t+=`  Total Routes: ${d.tot}\n`;
-  t+=`  Late Entries: ${d.lateArrivals.length}\n`;
-  t+=`  OTD Hits: ${d.otdHits.length}\n`;
-  t+=`  Expected OTD: ${d.otdPct}%\n\n`;
+  t+=`\ud83d\udcca OVERVIEW\n`;
+  t+=`  Routes: ${d.tot}  |  Late: ${d.lateArrivals.length}  |  OTD Hits: ${d.otdHits.length}  |  Expected OTD: ${d.otdPct}%\n\n`;
 
-  t+=`WAVE BREAKDOWN\n`;
-  t+=`  ${'Wave Time'.padEnd(12)}${'Total'.padEnd(8)}${'Late'.padEnd(8)}OTD\n`;
-  t+=`  ${'\u2500'.repeat(36)}\n`;
+  t+=`${SEP}\n`;
+  t+=`\ud83c\udf0a WAVES\n`;
   d.waveBreakdown.forEach(w=>{
-    t+=`  ${w.time.padEnd(12)}${String(w.total).padEnd(8)}${String(w.late).padEnd(8)}${w.otd}\n`;
+    t+=`  ${w.time}  \u2192  ${w.total} routes  |  ${w.late} late  |  ${w.otd} OTD\n`;
   });
 
-  t+=`\nDSP PERFORMANCE\n`;
-  t+=`  ${'DSP'.padEnd(8)}${'Total'.padEnd(8)}${'Late'.padEnd(8)}OTD\n`;
-  t+=`  ${'\u2500'.repeat(36)}\n`;
+  t+=`\n${SEP}\n`;
+  t+=`\ud83c\udfe2 DSP PERFORMANCE\n`;
   Object.entries(d.dspMap).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([name,v])=>{
-    t+=`  ${name.padEnd(8)}${String(v.total).padEnd(8)}${String(v.late).padEnd(8)}${v.otd}\n`;
+    t+=`  ${name}  \u2192  ${v.total} routes  |  ${v.late} late  |  ${v.otd} OTD\n`;
   });
 
-  t+=`\nLATE ARRIVALS (${d.lateArrivals.length})\n`;
-  if(d.lateArrivals.length===0) t+=`  None\n`;
-  else{
-    t+=`  ${'Wave'.padEnd(12)}${'Route'.padEnd(12)}${'DSP'.padEnd(8)}Check-in\n`;
-    t+=`  ${'\u2500'.repeat(44)}\n`;
-    d.lateArrivals.forEach(l=>{ t+=`  ${l.waveTime.padEnd(12)}${l.route.padEnd(12)}${l.dsp.padEnd(8)}${l.checkinTime} (+${l.delay}min)\n`; });
+  t+=`\n${SEP}\n`;
+  t+=`\u23f0 LATE ARRIVALS (${d.lateArrivals.length})\n`;
+  if(d.lateArrivals.length===0){
+    t+=`  \u2705 None\n`;
+  } else {
+    d.lateArrivals.forEach(l=>{
+      t+=`  ${l.route}  \u00b7  ${l.dsp}  \u00b7  Wave ${l.waveTime}  \u00b7  ${l.checkinTime} (+${l.delay} min)\n`;
+    });
   }
-  if(rptEdits.late){ t+=`  Notes: ${rptEdits.late}\n`; }
+  if(rptEdits.late){ t+=`\n  Notes: ${rptEdits.late}\n`; }
 
-  t+=`\nOTD HITS (${d.otdHits.length})\n`;
-  if(d.otdHits.length===0) t+=`  None marked\n`;
-  else{
-    t+=`  ${'Wave'.padEnd(12)}${'Route'.padEnd(12)}${'DSP'.padEnd(8)}${'Check-in'.padEnd(10)}Notes\n`;
-    t+=`  ${'\u2500'.repeat(54)}\n`;
-    d.otdHits.forEach(o=>{ t+=`  ${o.waveTime.padEnd(12)}${o.route.padEnd(12)}${o.dsp.padEnd(8)}${(o.checkinTime||'\u2014').padEnd(10)}${o.noteText||'\u2014'}\n`; });
+  t+=`\n${SEP}\n`;
+  t+=`\ud83c\udfaf OTD HITS (${d.otdHits.length})\n`;
+  if(d.otdHits.length===0){
+    t+=`  None marked\n`;
+  } else {
+    d.otdHits.forEach(o=>{
+      t+=`  ${o.route}  \u00b7  ${o.dsp}  \u00b7  Wave ${o.waveTime}  \u00b7  Reason: ${o.noteText||'\u2014'}\n`;
+    });
   }
-  if(rptEdits.otd){ t+=`  Notes: ${rptEdits.otd}\n`; }
+  if(rptEdits.otd){ t+=`\n  Notes: ${rptEdits.otd}\n`; }
 
   if(rptEdits.reportNotes){
-    t+=`\nREPORT NOTES\n`;
+    t+=`\n${SEP}\n`;
+    t+=`\ud83d\udcdd REPORT NOTES\n`;
     t+=`  ${rptEdits.reportNotes}\n`;
   }
 
-  t+=`\n${'\u2500'.repeat(50)}\n`;
-  t+=`Generated: ${now.toLocaleTimeString('de-DE')}\n`;
+  t+=`\n${SEP}\n`;
   return t;
 }
 
 
 function copyRpt(){
-  const d=getReportData();
-  let t=`DNX3 End of Day Yard Breakdown\n${'─'.repeat(45)}\n\n`;
-  t+=`OVERVIEW SUMMARY\n`;
-  t+=`  Total Routes: ${d.tot}\n`;
-  t+=`  Late Entries: ${d.lateArrivals.length}\n`;
-  t+=`  OTD Hits: ${d.otdHits.length}\n`;
-  t+=`  Expected OTD: ${d.otdPct}%\n\n`;
+  const snap=pastSnapshot;
+  const d=getReportData(snap);
+  const now=new Date();
+  const dateStr=snap
+    ? snap.date
+    : now.toLocaleDateString('en-GB',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+  const timeStr=now.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+  const SEP='\u2501'.repeat(42);
+  let t=`DNX3 \u2014 End of Day Yard Breakdown\n`;
+  t+=`${dateStr} \u00b7 Generated: ${timeStr}\n`;
+  t+=`${SEP}\n\n`;
 
-  t+=`WAVE BREAKDOWN\n`;
+  t+=`\ud83d\udcca OVERVIEW\n`;
+  t+=`  Routes: ${d.tot}  |  Late: ${d.lateArrivals.length}  |  OTD Hits: ${d.otdHits.length}  |  Expected OTD: ${d.otdPct}%\n\n`;
+
+  t+=`${SEP}\n`;
+  t+=`\ud83c\udf0a WAVES\n`;
   d.waveBreakdown.forEach(w=>{
-    t+=`  ${w.time}: ${w.total} routes | ${w.late} late | ${w.otd} OTD\n`;
+    t+=`  ${w.time}  \u2192  ${w.total} routes  |  ${w.late} late  |  ${w.otd} OTD\n`;
   });
 
-  t+=`\nDSP PERFORMANCE\n`;
+  t+=`\n${SEP}\n`;
+  t+=`\ud83c\udfe2 DSP PERFORMANCE\n`;
   Object.entries(d.dspMap).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([name,v])=>{
-    t+=`  ${name}: ${v.total} routes | ${v.late} late | ${v.otd} OTD\n`;
+    t+=`  ${name}  \u2192  ${v.total} routes  |  ${v.late} late  |  ${v.otd} OTD\n`;
   });
 
-  t+=`\nLATE ARRIVALS (${d.lateArrivals.length})\n`;
-  if(d.lateArrivals.length===0) t+=`  ✅ None\n`;
-  else d.lateArrivals.forEach(l=>{ t+=`  ${l.waveTime} | ${l.route} | ${l.dsp} | ${l.checkinTime} (+${l.delay}min)\n`; });
-  if(rptEdits.late) t+=`  Notes: ${rptEdits.late}\n`;
+  t+=`\n${SEP}\n`;
+  t+=`\u23f0 LATE ARRIVALS (${d.lateArrivals.length})\n`;
+  if(d.lateArrivals.length===0){
+    t+=`  \u2705 None\n`;
+  } else {
+    d.lateArrivals.forEach(l=>{
+      t+=`  ${l.route}  \u00b7  ${l.dsp}  \u00b7  Wave ${l.waveTime}  \u00b7  ${l.checkinTime} (+${l.delay} min)\n`;
+    });
+  }
+  if(rptEdits.late){ t+=`\n  Notes: ${rptEdits.late}\n`; }
 
-  t+=`\nOTD HITS (${d.otdHits.length})\n`;
-  if(d.otdHits.length===0) t+=`  None marked\n`;
-  else d.otdHits.forEach(o=>{ t+=`  ${o.waveTime} | ${o.route} | ${o.dsp} | ${o.checkinTime} | ${o.noteText||'—'}\n`; });
-  if(rptEdits.otd) t+=`  Notes: ${rptEdits.otd}\n`;
+  t+=`\n${SEP}\n`;
+  t+=`\ud83c\udfaf OTD HITS (${d.otdHits.length})\n`;
+  if(d.otdHits.length===0){
+    t+=`  None marked\n`;
+  } else {
+    d.otdHits.forEach(o=>{
+      t+=`  ${o.route}  \u00b7  ${o.dsp}  \u00b7  Wave ${o.waveTime}  \u00b7  Reason: ${o.noteText||'\u2014'}\n`;
+    });
+  }
+  if(rptEdits.otd){ t+=`\n  Notes: ${rptEdits.otd}\n`; }
 
-  if(rptEdits.reportNotes) t+=`\nREPORT NOTES\n  ${rptEdits.reportNotes}\n`;
+  if(rptEdits.reportNotes){
+    t+=`\n${SEP}\n`;
+    t+=`\ud83d\udcdd REPORT NOTES\n`;
+    t+=`  ${rptEdits.reportNotes}\n`;
+  }
 
-  navigator.clipboard.writeText(t).then(()=>showToast('📋 Copied!'));
+  t+=`\n${SEP}\n`;
+  navigator.clipboard.writeText(t).then(()=>showToast('\ud83d\udccb Copied!'));
 }
-
 
 function downloadRpt(){
   const t=buildReportText();
@@ -996,12 +1096,18 @@ function downloadRpt(){
   showToast('\u2b07\ufe0f Report downloaded!');
 }
 
-// Change #3: Submit report to Slack
 async function submitRptToSlack(){
   const t=buildReportText();
   const now=new Date();
   const dateStr=now.toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric'});
-  const title=`📊 Yard Report Cycle_1 — DNX3 — ${dateStr}`;
+  // Auto-detect cycle from route prefix (e.g. SA_A → Same Day-A, CA_A → Cycle_1)
+  const prefix=getPrefix().toUpperCase();
+  let cycleLabel='Cycle_1';
+  if(prefix.startsWith('SA_A')) cycleLabel='Same Day-A';
+  else if(prefix.startsWith('SA_B')) cycleLabel='Same Day-B';
+  else if(prefix.startsWith('SA_C')) cycleLabel='Same Day-C';
+  else if(prefix.startsWith('CA_')) cycleLabel='Cycle_1';
+  const title=`\ud83d\udcca Yard Report ${cycleLabel} \u2014 DNX3 \u2014 ${dateStr}`;
   try{
     const r=await fetch('/api/slack_report',{
       method:'POST',
