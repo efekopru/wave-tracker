@@ -83,18 +83,15 @@ function toggleDark(){
 function toggleHeaderSearch(){
   const wrap=document.getElementById('hsearch-wrap');
   const inp=document.getElementById('si');
-  const hdr=document.getElementById('main-header');
   if(!wrap)return;
   const isOpen=wrap.classList.contains('open');
   if(isOpen){
     wrap.classList.remove('open');
-    hdr.classList.remove('search-open');
     inp.value='';
     searchQ='';
     renderMain();
   } else {
     wrap.classList.add('open');
-    hdr.classList.add('search-open');
     setTimeout(()=>inp.focus(),30);
   }
 }
