@@ -471,7 +471,7 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .wave-accordion{margin-bottom:10px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);}
 .wave-acc-hdr{display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer;background:var(--surface);border:none;width:100%;text-align:left;color:var(--text);user-select:none;}
 .wave-acc-hdr:hover{background:var(--surface2);}
-.wah-chev{font-size:.65rem;color:var(--subtext);transition:transform .32s cubic-bezier(.4,0,.2,1);flex-shrink:0;}
+.wah-chev{font-size:.65rem;color:var(--subtext);transition:transform .2s;flex-shrink:0;}
 .wave-acc-hdr.open .wah-chev{transform:rotate(90deg);}
 .wah-time{font-weight:700;font-size:.95rem;min-width:90px;}
 .wah-prog{flex:1;}
@@ -690,48 +690,9 @@ function autoOpenWave(){
   lastAutoWave = active;
   WAVES.forEach((_,i)=>{ waveOpen[i] = (i === active); });
   // Animate accordion panels if DOM is already rendered
-  animateWaves();
 }
 
-function slideWave(body, hdr, open){
-  if(open){
-    hdr.classList.add('open');
-    body.classList.add('open');
-    body.style.transition='none';
-    body.style.height='auto';
-    const h=body.scrollHeight;
-    body.style.height='0';
-    body.getBoundingClientRect();
-    body.style.transition='';
-    body.style.height=h+'px';
-    body.addEventListener('transitionend',function done(){
-      body.removeEventListener('transitionend',done);
-      body.style.height='auto';
-    },{once:true});
-  } else {
-    // offsetHeight works even when height is 'auto'
-    const h=body.offsetHeight;
-    body.style.transition='none';
-    body.style.height=h+'px';
-    body.getBoundingClientRect();
-    body.style.transition='';
-    body.style.height='0';
-    hdr.classList.remove('open');
-    body.classList.remove('open');
-  }
-}
 
-function animateWaves(){
-  const hdrs  =document.querySelectorAll('.wave-acc-hdr');
-  const bodies=document.querySelectorAll('.wave-acc-body');
-  WAVES.forEach((_,i)=>{
-    if(!hdrs[i]||!bodies[i])return;
-    const shouldOpen=!!waveOpen[i];
-    const isOpen=bodies[i].classList.contains('open');
-    if(shouldOpen===isOpen)return;
-    slideWave(bodies[i],hdrs[i],shouldOpen);
-  });
-}
 
 function renderMain(){
   autoOpenWave(); // recalculate which wave should be open
@@ -770,13 +731,18 @@ function renderMain(){
     </div></div>`;
   });
   mc.innerHTML=html; bindCards(mc);
-  animateWaves(); // apply open/close classes after DOM rebuild
+  // re-apply open classes after DOM rebuild
+  document.querySelectorAll('.wave-acc-hdr').forEach((h,i)=>{ h.classList.toggle('open',!!waveOpen[i]); });
+  document.querySelectorAll('.wave-acc-body').forEach((b,i)=>{ b.classList.toggle('open',!!waveOpen[i]); });
 }
 function toggleWave(i){
   waveOpen[i]=!waveOpen[i];
   const hdr  =document.querySelectorAll('.wave-acc-hdr')[i];
   const body =document.querySelectorAll('.wave-acc-body')[i];
-  if(hdr&&body) slideWave(body,hdr,waveOpen[i]);
+  if(hdr&&body){
+    hdr.classList.toggle('open',waveOpen[i]);
+    body.classList.toggle('open',waveOpen[i]);
+  }
 }
 
 // ── Sound ─────────────────────────────────────────────────────────────────────
