@@ -169,7 +169,13 @@ async function bootApp(){
   // Verify token still valid
   try{
     const r=await fetch('/api/me',{headers:{'X-Token':TOKEN}});
-    if(!r.ok){showLoginScreen();return;}
+    if(!r.ok){
+      localStorage.removeItem('dnx3_token');
+      localStorage.removeItem('dnx3_role');
+      TOKEN=''; ROLE='';
+      showLoginScreen();
+      return;
+    }
     const d=await r.json(); ROLE=d.role;
     localStorage.setItem('dnx3_role',ROLE);
   }catch(e){showLoginScreen();return;}
