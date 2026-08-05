@@ -695,17 +695,23 @@ function autoOpenWave(){
 
 function slideWave(body, hdr, open){
   if(open){
+    hdr.classList.add('open');
+    body.classList.add('open');
+    // Temporarily show at full auto height to measure real scrollHeight
+    body.style.transition='none';
+    body.style.height='auto';
+    const h=body.scrollHeight;
+    // Snap back to 0 and let the transition run to the measured height
     body.style.height='0';
     body.getBoundingClientRect(); // force reflow
-    const h=body.scrollHeight;
+    body.style.transition='';
     body.style.height=h+'px';
     body.addEventListener('transitionend',function done(){
       body.removeEventListener('transitionend',done);
-      body.style.height='auto';
+      body.style.height='auto'; // allow free growth after open
     },{once:true});
-    hdr.classList.add('open');
-    body.classList.add('open');
   } else {
+    // Lock to current pixel height first, then animate to 0
     body.style.height=body.scrollHeight+'px';
     body.getBoundingClientRect();
     body.style.height='0';
