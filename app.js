@@ -13,18 +13,20 @@ let scanlog     = [];   // array of route strings
 let waveOpen    = {};
 let missingOpen = {};
 let searchQ     = '';
-let dark        = localStorage.getItem('dnx3_dk') === '1';
+let themeMode   = (['light','dark'].includes(localStorage.getItem('dnx3_theme')) ? localStorage.getItem('dnx3_theme') : 'light');
+let dark        = themeMode === 'dark';
 let socket      = null;
 let notePanel   = {open:false, route:''};
 
 // Slack late alert tracking — avoid duplicate alerts per route
 const slackAlerted = new Set();
+let slackEnabled = false; // loaded from settings, off by default
 
 // Editable report state
 let rptEdits = { late: '', otd: '', reportNotes: '' };
 let rptEditMode = { late: false, otd: false };
 
-if (dark) document.body.classList.add('dark');
+// Theme applied after applyTheme is defined below
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function isIn(wi, r)      { return !!(state[wi] && state[wi][r]); }
@@ -68,16 +70,38 @@ function wMin(s) {
 // Change #1: Remove 5-min grace — lateness = exact wave time
 function isLate(wi){ const n=new Date(); return(n.getHours()*60+n.getMinutes())>wMin(WAVES[wi].time); }
 
+
+// ── Theme helpers ─────────────────────────────────────────────────────────
+const THEME_ICONS = {
+  light: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.4"/><line x1="8" y1="1" x2="8" y2="3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="8" y1="13" x2="8" y2="15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="1" y1="8" x2="3" y2="8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="13" y1="8" x2="15" y2="8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="2.93" y1="2.93" x2="4.34" y2="4.34" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="11.66" y1="11.66" x2="13.07" y2="13.07" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="13.07" y1="2.93" x2="11.66" y2="4.34" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="4.34" y1="11.66" x2="2.93" y2="13.07" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`,
+  dark:  `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.5 10A6 6 0 0 1 6 2.5a6 6 0 1 0 7.5 7.5z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  auto:  `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity=".4"/><path d="M8 2a6 6 0 0 1 0 12V2z" fill="currentColor" opacity=".25"/></svg>`
+};
+function applyTheme(mode){
+  themeMode = mode;
+  dark = mode === 'dark';
+  document.body.classList.toggle('dark', dark);
+  document.body.classList.toggle('theme-auto', mode === 'auto');
+  const btn = document.getElementById('dark-btn');
+  if(btn) btn.innerHTML = THEME_ICONS[mode] || THEME_ICONS.light;
+  const lbl = document.getElementById('dark-btn-label');
+  if(lbl) lbl.textContent = '';
+  localStorage.setItem('dnx3_theme', mode);
+}
+function toggleDark(){
+  const modes = ['light','dark'];
+  const next = modes[(modes.indexOf(themeMode)+1) % modes.length];
+  applyTheme(next);
+}
+// Apply theme on page load (now safe — applyTheme is defined)
+applyTheme(themeMode);
+
 // ── Clock ─────────────────────────────────────────────────────────────────────
 function updateClock(){ document.getElementById('clock').textContent=new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
 setInterval(updateClock,1000); updateClock();
 
 // ── Dark mode ─────────────────────────────────────────────────────────────────
-function toggleDark(){
-  dark=!dark; document.body.classList.toggle('dark',dark);
-  localStorage.setItem('dnx3_dk',dark?'1':'0');
-  document.getElementById('dark-btn').textContent=dark?'☀️':'🌙';
-}
+
 
 
 
@@ -91,7 +115,7 @@ function toggleSidebar(){
   aside.classList.toggle('collapsed',!sidebarOpen);
   layout.classList.toggle('sb-collapsed',!sidebarOpen);
 }
-if(dark)document.getElementById('dark-btn').textContent='☀️';
+// applyTheme handles dark-btn init above
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 let _tt;
@@ -108,6 +132,17 @@ document.head.appendChild(ts);
 // Webhook settings styles
 const whStyles=document.createElement('style');
 whStyles.textContent=`
+
+.slack-toggle-wrap{display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--surface2);border-radius:10px;border:1.5px solid var(--border);margin-bottom:18px;}
+.slack-toggle-label{flex:1;}
+.slack-toggle-title{font-size:.88rem;font-weight:600;color:var(--text);}
+.slack-toggle-sub{font-size:.72rem;color:var(--subtext);margin-top:2px;}
+.slack-toggle-btn{position:relative;width:44px;height:26px;border-radius:13px;border:none;cursor:pointer;transition:background .2s;padding:0;background:var(--border);flex-shrink:0;}
+.slack-toggle-btn[data-on="1"]{background:var(--green);}
+.slack-toggle-ind{position:absolute;top:3px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:transform .2s;}
+.slack-toggle-btn[data-on="1"] .slack-toggle-ind{transform:translateX(20px);}
+.slack-toggle-status{font-size:.72rem;font-weight:600;min-width:80px;color:var(--subtext);}
+.slack-toggle-btn[data-on="1"] ~ .slack-toggle-status{color:var(--green);}
 .wh-label{font-size:.75rem;font-weight:600;color:var(--subtext);display:block;margin-bottom:6px;}
 .wh-hint{font-size:.68rem;color:var(--subtext);}
 .wh-main-input{width:100%;max-width:600px;padding:10px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:.82rem;background:var(--surface2);color:var(--text);outline:none;font-family:monospace;margin-bottom:6px;}
@@ -126,8 +161,65 @@ document.head.appendChild(whStyles);
 
 
 // ── Login ─────────────────────────────────────────────────────────────────────
+// Password field — always type=text, masked with bullet chars
+let _pwReal='';
+function _pwSetup(){
+  const inp=document.getElementById('pw-input');
+  if(!inp||inp._pwReady)return;
+  inp._pwReady=true;
+  inp.addEventListener('input',function(e){
+    const sel=inp.selectionStart;
+    const old=_pwReal;
+    const val=inp.value;
+    // count bullets already there
+    const bullets=old.split('').map(()=>'\u2022').join('');
+    if(val.length>bullets.length){
+      // chars added
+      const added=val.slice(bullets.length-val.length+val.length-(val.length-bullets.length));
+      // simpler: new chars are non-bullet chars
+      let real='';
+      for(let i=0;i<val.length;i++){
+        if(val[i]==='\u2022')real+=old[i]||'';
+        else real+=val[i];
+      }
+      _pwReal=real;
+    } else {
+      _pwReal=old.slice(0,val.length);
+    }
+    if(inp.dataset.masked==='1'){
+      const masked=_pwReal.split('').map(()=>'\u2022').join('');
+      inp.value=masked;
+      inp.setSelectionRange(sel,sel);
+    }
+  });
+  inp.addEventListener('keydown',function(e){
+    if(e.key==='Backspace'&&inp.dataset.masked==='1'){
+      e.preventDefault();
+      const s=inp.selectionStart,en=inp.selectionEnd;
+      if(s!==en){_pwReal=_pwReal.slice(0,s)+_pwReal.slice(en);}
+      else if(s>0){_pwReal=_pwReal.slice(0,s-1)+_pwReal.slice(s);}
+      inp.value=_pwReal.split('').map(()=>'\u2022').join('');
+      const ns=Math.max(0,s-(s===en?1:0));
+      inp.setSelectionRange(ns,ns);
+    }
+  });
+}
+function showPw(){
+  _pwSetup();
+  const inp=document.getElementById('pw-input');
+  inp.dataset.masked='0';
+  inp.value=_pwReal;
+}
+function hidePw(){
+  _pwSetup();
+  const inp=document.getElementById('pw-input');
+  inp.dataset.masked='1';
+  inp.value=_pwReal.split('').map(()=>'•').join('');
+}
+// Init masking on load
+document.addEventListener('DOMContentLoaded',function(){_pwSetup();});
 async function doLogin(){
-  const pw=document.getElementById('pw-input').value.trim();
+  const pw=_pwReal.trim();
   const errEl=document.getElementById('login-err');
   errEl.textContent='';
   if(!pw){errEl.textContent='Please enter a password.';return;}
@@ -167,6 +259,7 @@ async function bootApp(){
 
   // Show UI
   document.getElementById('main-header').style.display='flex';
+  if(window.initTabIndicator) setTimeout(window.initTabIndicator, 50);
   document.getElementById('tv').style.display='flex';
 
   // Role badge
@@ -293,6 +386,7 @@ async function checkSlackLateAlerts(){
       if(slackAlerted.has(key))return; // already alerted
       slackAlerted.add(key);
       // Fire and forget — send alert to server
+      if(!slackEnabled){return;} // Slack disabled
       fetch('/api/slack_late',{
         method:'POST',
         headers:{'Content-Type':'application/json','X-Token':TOKEN},
@@ -345,8 +439,8 @@ function connectSocket(){
     if(notePanel.open && notePanel.route===d.route){
       const ta=document.getElementById('note-ta');
       if(ta) ta.value=d.text||'';
-      const cb=document.getElementById('note-otd');
-      if(cb) cb.checked=!!d.otd;
+      const cb=document.getElementById('note-otd-btn');
+      if(cb){if(d.otd)cb.classList.add('otd-on');else cb.classList.remove('otd-on');}
     }
     render();
   });
@@ -412,12 +506,15 @@ function openNotePanel(route){
   const currentText=getNoteText(route);
   const currentOtd=getNoteOtd(route);
   // Change #6: OTD checkbox only for managers, but OTD badge visible to all
-  const otdRow = ROLE==='manager' ? `<div class="np-otd-row"><label class="np-otd-label"><input type="checkbox" id="note-otd" class="np-otd-cb" ${currentOtd?'checked':''}/>  <span class="np-otd-text">🎯 Mark as OTD Hit</span></label></div>` : '';
-  panel.innerHTML=`<div class="np-header"><span class="np-title">📝 ${route}</span><button class="np-close" onclick="closeNotePanel()">✕</button></div>
+  const otdRow = ROLE==='manager' ? `<div class="np-otd-row${currentOtd?' otd-on':''}" id="note-otd-btn"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8 2.5L14.5 13.5H1.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><line x1="8" y1="6.5" x2="8" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.8" r="0.7" fill="currentColor"/></svg><span class="np-otd-text">Mark as OTD Hit</span><span class="np-otd-ind" onclick="npToggleOtd(this.parentElement)" style="cursor:pointer;"></span></div>` : '';
+  panel.innerHTML=`<div class="np-header"><span class="np-title"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M11.5 2.5a1.5 1.5 0 0 1 2.121 2.121l-8.5 8.5-2.828.707.707-2.828 8.5-8.5z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg> ${route}</span><button class="np-close" onclick="closeNotePanel()" title="Close"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
     <textarea id="note-ta" class="np-textarea" placeholder="Add notes for ${route}...">${currentText}</textarea>
     ${otdRow}
-    <div class="np-actions"><button class="rabtn pri" onclick="saveNote()">💾 Save</button><button class="rabtn" onclick="closeNotePanel()">Close</button></div>`;
-  panel.classList.add('open');
+    <div class="np-actions"><button class="rabtn pri" onclick="saveNote()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2.5 8.5l4 4 7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg> Save</button><button class="rabtn" onclick="closeNotePanel()">Cancel</button></div>`;
+  panel.classList.add('open'); setTimeout(()=>{const ta=document.getElementById('note-ta');if(ta)ta.blur();},50);
+}
+function npToggleOtd(btn){
+  btn.classList.toggle('otd-on');
 }
 function closeNotePanel(){
   notePanel={open:false,route:''};
@@ -426,10 +523,10 @@ function closeNotePanel(){
 }
 async function saveNote(){
   const ta=document.getElementById('note-ta');
-  const cb=document.getElementById('note-otd');
+  const cb=document.getElementById('note-otd-btn');
   if(!ta)return;
   const text=ta.value.trim();
-  const otd=cb?cb.checked:(notes[notePanel.route]?.otd||false);
+  const otd=cb?cb.classList.contains('otd-on'):(notes[notePanel.route]?.otd||false);
   if(text||otd){
     notes[notePanel.route]={text,otd};
   } else {
@@ -504,8 +601,8 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .rcard.red{background:var(--red-bg);border-color:var(--red-border);}
 .rcard.late{background:var(--yellow-bg);border-color:var(--yellow-border);}
 .rcard.checked{opacity:.5;}
-.rcard.checked .ck{display:block;}
-.ck{display:none;position:absolute;top:4px;right:7px;font-size:.8rem;color:#166534;font-weight:700;}
+
+
 .rcard.dimmed{opacity:.15;pointer-events:none;}
 .cr{font-weight:700;font-size:.82rem;}.cs{font-size:.65rem;color:var(--subtext);margin-top:1px;}
 .cd{font-size:.63rem;color:var(--subtext);margin-top:1px;}.ct{font-size:.63rem;color:#3b82f6;margin-top:2px;font-weight:600;}
@@ -518,26 +615,22 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .otd-btn{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:5px;border:1.5px solid var(--border);background:var(--surface2);cursor:pointer;font-size:.65rem;opacity:.45;transition:opacity .15s,background .15s;}
 .otd-btn:hover{opacity:1;}
 .otd-btn.otd-active{background:#fef2f2;border-color:#dc2626;opacity:1;}
-.otd-badge{position:absolute;top:4px;left:7px;font-size:.7rem;}
+.otd-badge{position:absolute;top:0;right:0;background:#dc2626;color:#fff;font-size:.58rem;font-weight:700;letter-spacing:.4px;padding:2px 6px 2px 7px;border-radius:0 7px 0 7px;text-transform:uppercase;line-height:1.4;pointer-events:none;z-index:2;}.late-tag{position:absolute;bottom:0;left:0;background:#d97706;color:#fff;font-size:.58rem;font-weight:700;letter-spacing:.4px;padding:2px 7px 2px 6px;border-radius:0 7px 0 7px;text-transform:uppercase;line-height:1.4;pointer-events:none;z-index:2;}
 .sw-lbl{font-size:.7rem;font-weight:700;color:var(--subtext);text-transform:uppercase;letter-spacing:.6px;padding:6px 0 4px;border-top:1px solid var(--border);margin-top:4px;}
 .sw-lbl:first-child{border-top:none;margin-top:0;}
 .srwrap{padding:14px;}.srwrap .rgrid{margin-bottom:6px;}
 .no-results{text-align:center;color:var(--subtext);padding:30px;font-size:.85rem;}
 /* Note Panel */
-.note-panel{position:fixed;top:0;right:-360px;width:340px;height:100vh;background:var(--surface);border-left:1px solid var(--border);box-shadow:-4px 0 20px rgba(0,0,0,.15);z-index:1000;display:flex;flex-direction:column;transition:right .25s ease;}
+.note-panel{position:fixed;top:0;right:-360px;width:340px;height:100vh;background:var(--bg);border-left:1px solid var(--border);box-shadow:-4px 0 20px rgba(0,0,0,.15);z-index:1000;display:flex;flex-direction:column;transition:right .25s ease;overflow:hidden;}
 .note-panel.open{right:0;}
 .np-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);}
 .np-title{font-weight:700;font-size:.9rem;}
 .np-close{border:none;background:none;font-size:1.1rem;cursor:pointer;color:var(--text);padding:4px 8px;border-radius:4px;}
 .np-close:hover{background:var(--surface2);}
-.np-textarea{flex:1;margin:14px 16px;padding:12px;border:1px solid var(--border);border-radius:8px;resize:none;font-size:.82rem;font-family:inherit;background:var(--bg);color:var(--text);outline:none;}
-.np-textarea:focus{border-color:#3b82f6;}
-.np-otd-row{padding:0 16px 10px;display:flex;align-items:center;}
-.np-otd-label{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.82rem;font-weight:600;color:var(--text);padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface2);transition:border-color .15s,background .15s;}
-.np-otd-label:hover{border-color:#3b82f6;background:var(--bg);}
-.np-otd-cb{width:16px;height:16px;accent-color:#3b82f6;cursor:pointer;}
-.np-otd-text{user-select:none;}
-.np-actions{display:flex;gap:9px;padding:12px 16px;border-top:1px solid var(--border);}
+.np-textarea{flex:1;margin:12px 16px 0;padding:12px;border:1px solid var(--border);border-radius:8px;resize:none;font-size:.82rem;font-family:inherit;background:var(--surface-solid);color:var(--text);outline:none;box-sizing:border-box;width:calc(100% - 32px);}
+.np-textarea:focus{border-color:var(--border);}
+.dark .np-otd-toggle.otd-on .np-otd-toggle.otd-on 
+.np-otd-row{padding:0 16px 8px;}.np-otd-row{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:.82rem;font-weight:600;color:var(--text);}.np-otd-row.otd-on{color:var(--text);}.np-otd-text{flex:1;text-align:left;user-select:none;}.np-otd-ind{flex-shrink:0;width:30px;height:18px;border-radius:9px;background:rgba(120,120,128,0.3);position:relative;transition:background .2s;}.np-otd-ind::after{content:'';position:absolute;top:3px;left:3px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .2s;}.np-otd-row.otd-on .np-otd-ind{background:#dc2626;}.np-otd-row.otd-on .np-otd-ind::after{transform:translateX(12px);}.np-actions{display:flex;gap:8px;padding:8px 16px 14px;}
 /* ScanLog */
 .scanlog-sec{margin-top:24px;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
 .scanlog-title{font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--subtext);padding:10px 14px 8px;border-bottom:1px solid var(--border);}
@@ -564,9 +657,9 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .rsec-title.collapsible.open .coll-chev{transform:rotate(90deg);}
 .rsec-body{display:none;}
 .rsec-body.open{display:block;}
-.sgrid{display:grid;grid-template-columns:repeat(4,1fr);}
-.sstat{height:88px!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;text-align:center!important;padding:0 10px!important;border-right:1px solid var(--border)!important;}
-.sstat:last-child{border-right:none!important;}
+.sgrid{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:88px;margin-bottom:0!important;}
+.sstat{height:88px!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;text-align:center!important;padding:0 10px!important;border-right:1px solid var(--border)!important;}.sstat:last-child{border-right:none!important;}
+
 .sval{font-size:1.35rem;font-weight:700;}.slbl{font-size:.65rem;color:var(--subtext);margin-top:2px;}
 .sv-blue{color:#3b82f6;}.sv-green{color:var(--green);}.sv-red{color:var(--red);}.sv-amber{color:#d97706;}
 .rtbl{width:100%;border-collapse:collapse;font-size:.76rem;table-layout:fixed;}
@@ -618,7 +711,7 @@ main{flex:1;overflow-y:auto;padding:16px;}
 .snap-banner{display:flex;align-items:center;background:var(--yellow-bg);border:1px solid var(--yellow-border);border-radius:8px;padding:9px 14px;margin-bottom:12px;font-size:.8rem;color:var(--text);}
 .rpt-time-input{padding:3px 6px;border:1px solid var(--border);border-radius:5px;font-size:.75rem;background:var(--bg);color:var(--text);width:90px;}
 .rpt-x-btn{border:none;background:none;color:var(--red);font-size:1rem;cursor:pointer;padding:0 4px;font-weight:700;}
-.rpt-x-btn:hover{color:#991b1b;}
+.rpt-x-btn:hover{color:#991b1b;}@media(prefers-color-scheme:dark){body.theme-auto{--bg:#000000;--surface:rgba(28,28,30,.9);--surface2:rgba(44,44,46,.85);--surface3:rgba(58,58,60,.6);--surface-solid:#1c1c1e;--glass-bg:rgba(28,28,30,.78);--glass-border:rgba(255,255,255,.1);--text:#ffffff;--text2:#ebebf5;--subtext:rgba(235,235,245,.6);--subtext2:rgba(235,235,245,.25);--border:rgba(255,255,255,.1);--border2:rgba(255,255,255,.16);--separator:rgba(84,84,88,.65);--header-bg:rgba(22,22,24,.88);--header-border:rgba(255,255,255,.1);--green:#30d158;--green-bg:rgba(48,209,88,.15);--green-border:rgba(48,209,88,.4);--green-text:#a8f5bc;--red:#ff453a;--red-bg:rgba(255,69,58,.15);--red-border:rgba(255,69,58,.4);--red-text:#ffd0cd;--yellow-bg:rgba(255,159,10,.14);--yellow-border:rgba(255,159,10,.35);--blue:#0a84ff;--blue-bg:rgba(10,132,255,.15);--blue-border:rgba(10,132,255,.35);--accent:#0a84ff;--accent-glow:rgba(10,132,255,.25);}}button svg{display:inline-block;vertical-align:middle;flex-shrink:0;}.rabtn{display:inline-flex;align-items:center;gap:6px;}
 .rpt-reason-input{padding:4px 7px;border:1px solid var(--border);border-radius:5px;font-size:.75rem;background:var(--bg);color:var(--text);width:100%;}
 `;
 document.head.appendChild(appStyles);
@@ -631,13 +724,13 @@ function cardHtml(wi,r,color){
   const hasN=hasNote(r.route);
   const isOtd=getNoteOtd(r.route); const otdTitle=isOtd?'Remove OTD':'Mark as OTD';
   return`<div class="rcard ${eff}${chk?' checked':''}${q&&!match?' dimmed':''}" data-wi="${wi}" data-r="${r.route}">
-    <div class="ck">☑</div>
-    ${isOtd?'<span class="otd-badge">🚨</span>':''}
+    
+    ${isOtd?'<span class="otd-badge">OTD</span>':''}${late?'<span class="late-tag">Late</span>':''}
     <div class="cr">${r.route}</div><div class="cs">${r.staging}</div><div class="cd">${r.dsp}</div>
     ${t?`<div class="ct">${t}</div>`:''}
     <div class="urow">
-      <button class="pen-btn${hasN?' has-note':''}" data-r="${r.route}" data-action="note" onclick="event.stopPropagation()">✏️</button>
-      <button class="otd-btn${isOtd?' otd-active':''}" data-r="${r.route}" data-action="otd" onclick="quickToggleOtd(event,this.dataset.r)" title="${otdTitle}">🚨</button>
+      <button class="pen-btn${hasN?' has-note':''}" data-r="${r.route}" data-action="note" onclick="event.stopPropagation()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M11.5 2.5a1.5 1.5 0 0 1 2.121 2.121l-8.5 8.5-2.828.707.707-2.828 8.5-8.5z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button class="otd-btn${isOtd?' otd-active':''}" data-r="${r.route}" data-action="otd" onclick="quickToggleOtd(event,this.dataset.r)" title="${otdTitle}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8 2.5 L14.5 13.5 H1.5 Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><line x1="8" y1="6.5" x2="8" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.8" r="0.7" fill="currentColor"/></svg></button>
     </div>
   </div>`;
 }
@@ -766,7 +859,7 @@ function loadPastReport(evt){
       rptEdits={late:'',otd:'',reportNotes:''};
       rptEditMode={late:false,otd:false};
       renderReport();
-      showToast('\ud83d\udcc2 Loaded: '+data.date);
+      showToast('Loaded: '+data.date);
     }catch(err){showToast('\u26a0\ufe0f Could not read file');}
   };
   reader.readAsText(file);
@@ -875,15 +968,15 @@ function renderReport(){
   const snapDate=isSnap?snap.date:'';
 
   // In snapshot mode: read-only, no edit buttons, no Slack/export actions
-  const editBtnHtml=(key)=>(!isSnap&&ROLE==='manager')?`<button class="rpt-edit-toggle${rptEditMode[key]?' active':''}" data-key="${key}" onclick="event.stopPropagation();toggleRptEdit(this.dataset.key)">${rptEditMode[key]?'\u2713 Done':'\u270f\ufe0f Edit'}</button>`:'';
+  const editBtnHtml=(key)=>(!isSnap&&ROLE==='manager')?`<button class="rpt-edit-toggle${rptEditMode[key]?' active':''}" data-key="${key}" onclick="event.stopPropagation();toggleRptEdit(this.dataset.key)">${rptEditMode[key]?`<svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2.5 8.5l4 4 7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg> Done`:`<svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M11.5 2.5a1.5 1.5 0 0 1 2.121 2.121l-8.5 8.5-2.828.707.707-2.828 8.5-8.5z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Edit`}</button>`:'';
 
   // Snapshot banner
-  const snapBanner=isSnap?`<div class="snap-banner">\ud83d\udcc2 Viewing past report: <strong>${snapDate}</strong> <button class="rabtn" style="margin-left:12px;padding:3px 10px;font-size:.72rem;" onclick="clearPastReport()">\u2190 Back to Live</button></div>`:'';
+  const snapBanner=isSnap?`<div class="snap-banner"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 4.5A1 1 0 0 1 2.5 3.5H6l1.5 2H13.5A1 1 0 0 1 14.5 6.5V12.5A1 1 0 0 1 13.5 13.5H2.5A1 1 0 0 1 1.5 12.5V4.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><span style="margin-left:5px">Viewing past report:</span> <strong>${snapDate}</strong> <button class="rabtn" style="margin-left:12px;padding:3px 10px;font-size:.72rem;" onclick="clearPastReport()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="margin-left:5px">Back to Live</span></button></div>`:'';
 
   // Load past report button (always shown at top)
   const loadBtn=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
-    ${!isSnap?`<span class="rpt-title">\ud83d\udccb End of Day Yard Breakdown</span>`:`<span class="rpt-title" style="color:var(--subtext);">\ud83d\udcc2 Past Report</span>`}
-    <button class="rabtn" style="margin-left:auto;font-size:.72rem;padding:4px 11px;" onclick="document.getElementById('past-report-file').click()">\ud83d\udcc2 Load Past Report</button>
+    ${!isSnap?`<span class="rpt-title"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="5.5" y="5.5" width="8" height="9" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M3.5 10.5H2.5A1 1 0 0 1 1.5 9.5V2.5A1 1 0 0 1 2.5 1.5H9.5A1 1 0 0 1 10.5 2.5V3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span style="margin-left:5px">End of Day Yard Breakdown</span></span>`:`<span class="rpt-title" style="color:var(--subtext);">\ud83d\udcc2 Past Report</span>`}
+    <button class="rabtn" style="margin-left:auto;font-size:.72rem;padding:4px 11px;" onclick="document.getElementById('past-report-file').click()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 4.5A1 1 0 0 1 2.5 3.5H6l1.5 2H13.5A1 1 0 0 1 14.5 6.5V12.5A1 1 0 0 1 13.5 13.5H2.5A1 1 0 0 1 1.5 12.5V4.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><span style="margin-left:5px">Load Past Report</span></button>
     <input type="file" id="past-report-file" accept=".json" style="display:none;" onchange="loadPastReport(event)"/>
   </div>`;
 
@@ -918,14 +1011,14 @@ function renderReport(){
   </table></div>
 
   <!-- Late Arrivals (collapsible, editable only in live mode) -->
-  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.late?' open':''}" onclick="toggleRptSec('late')"><span class="coll-chev">\u25b6</span> \u23f0 Late Arrivals (${d.lateArrivals.length}) ${editBtnHtml('late')}</div>
+  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.late?' open':''}" onclick="toggleRptSec('late')"><span class="coll-chev">\u25b6</span> <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.4"/><path d="M8 5v3.5l2.5 1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Late Arrivals (${d.lateArrivals.length}) ${editBtnHtml('late')}</div>
   <div class="rsec-body${rptCollapse.late?' open':''}" id="rpt-late">${d.lateArrivals.length===0?'<div class="empty-sec">\u2705 No late arrivals!</div>':`<table class="rtbl">
     <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th>${!isSnap?'<th>Edit Time</th><th></th>':''}</tr></thead>
     <tbody>${d.lateArrivals.map(l=>`<tr><td>${l.waveTime}</td><td><strong>${l.route}</strong></td><td>${l.dsp}</td><td><span style="color:#dc2626;font-weight:600">${l.checkinTime}</span> <span style="color:var(--subtext);font-size:.65rem">(+${l.delay}min)</span></td>${!isSnap?`<td><input type="time" class="rpt-time-input" value="${l.checkinTime}" data-wi2="${l.waveIdx}" data-r2="${l.route}" onchange="rptEditLateTime(+this.dataset.wi2,this.dataset.r2,this.value)"></td><td><button class="rpt-x-btn" data-wi="${l.waveIdx}" data-r="${l.route}" data-wt="${l.waveTime}" onclick="rptUncheckLate(+this.dataset.wi,this.dataset.r,this.dataset.wt)" title="Remove (set on-time)">\u2715</button></td>`:''}</tr>`).join('')}</tbody>
   </table>`}${(!isSnap&&rptEditMode.late)?`<textarea class="rpt-edit-area" id="rpt-edit-late" placeholder="Add annotations for late arrivals..." oninput="rptEdits.late=this.value">${rptEdits.late}</textarea>`:''}</div></div>
 
   <!-- OTD Hits (collapsible, editable only in live mode) -->
-  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.otd?' open':''}" onclick="toggleRptSec('otd')"><span class="coll-chev">\u25b6</span> \ud83c\udfaf OTD Hits (${d.otdHits.length}) ${editBtnHtml('otd')}</div>
+  <div class="rsec"><div class="rsec-title collapsible${rptCollapse.otd?' open':''}" onclick="toggleRptSec('otd')"><span class="coll-chev">\u25b6</span> <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8 2.5L14.5 13.5H1.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><line x1="8" y1="6.5" x2="8" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.8" r="0.7" fill="currentColor"/></svg> OTD Hits (${d.otdHits.length}) ${editBtnHtml('otd')}</div>
   <div class="rsec-body${rptCollapse.otd?' open':''}" id="rpt-otd">${d.otdHits.length===0?'<div class="empty-sec">No OTD hits marked yet.</div>':`<table class="rtbl">
     <thead><tr><th>Wave Time</th><th>Route</th><th>DSP</th><th>Check-in Time</th><th>Reason</th>${!isSnap?'<th></th>':''}</tr></thead>
     <tbody>${d.otdHits.map(o=>`<tr><td>${o.waveTime}</td><td><strong>${o.route}</strong></td><td>${o.dsp}</td><td>${o.checkinTime}</td><td>${!isSnap?`<input type="text" class="rpt-reason-input" value="${(o.noteText||'').replace(/"/g,'&quot;')}" placeholder="Add reason..." data-r3="${o.route}" onchange="rptEditOtdReason(this.dataset.r3,this.value)">`:(o.noteText||'\u2014')}</td>${!isSnap?`<td><button class="rpt-x-btn" data-r="${o.route}" onclick="rptUncheckOtd(this.dataset.r)" title="Remove OTD">\u2715</button></td>`:''}</tr>`).join('')}</tbody>
@@ -933,16 +1026,16 @@ function renderReport(){
 
   <!-- Report Notes (live mode only) -->
   ${(!isSnap&&ROLE==='manager')?`<div class="rpt-notes-sec">
-    <div class="rpt-notes-title">\ud83d\udcdd Report Notes</div>
+    <div class="rpt-notes-title"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M11.5 2.5a1.5 1.5 0 0 1 2.121 2.121l-8.5 8.5-2.828.707.707-2.828 8.5-8.5z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="margin-left:5px">Report Notes</span></div>
     <textarea class="rpt-notes-area" id="rpt-notes-area" placeholder="Add general report notes, comments, or context..." oninput="rptEdits.reportNotes=this.value">${rptEdits.reportNotes}</textarea>
   </div>`:''}
 
   <!-- Actions -->
   <div class="rsec"><div class="ractions">
-    <button class="rabtn pri" onclick="downloadRpt()">\u2b07\ufe0f Download .txt</button>
-    <button class="rabtn" onclick="copyRpt()">\ud83d\udccb Copy</button>
-    ${(!isSnap&&ROLE==='manager')?'<button class="rabtn" onclick="submitRptToSlack()">\ud83d\udce4 Submit to Slack</button>':''}
-    ${(!isSnap&&ROLE==='manager')?'<button class="rabtn" onclick="exportDayData()">\ud83d\udcbe Export Day Data</button>':''}
+    <button class="rabtn pri" onclick="downloadRpt()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8 2v8m0 0-3-3m3 3 3-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M2.5 11.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span style="margin-left:5px">Download .txt</span></button>
+    <button class="rabtn" onclick="copyRpt()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="5.5" y="5.5" width="8" height="9" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M3.5 10.5H2.5A1 1 0 0 1 1.5 9.5V2.5A1 1 0 0 1 2.5 1.5H9.5A1 1 0 0 1 10.5 2.5V3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span style="margin-left:5px">Copy</span></button>
+    ${(!isSnap&&ROLE==='manager')?'<button class="rabtn" onclick="submitRptToSlack()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14 2 2 7l4.5 1.5L14 2zm0 0-5.5 9L8.5 8.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="margin-left:5px">Submit to Slack</span></button>':''}
+    ${(!isSnap&&ROLE==='manager')?'<button class="rabtn" onclick="exportDayData()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="1.5" y="9.5" width="13" height="5" rx="1.5" stroke="currentColor" stroke-width="1.3"/><circle cx="12.5" cy="12" r="1" fill="currentColor"/><path d="M5 7.5V2m0 0L3 4m2-2 2 2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="margin-left:5px">Export Day Data</span></button>':''}
   </div></div>`;
 }
 
@@ -1125,7 +1218,7 @@ function copyRpt(){
   }
 
   t+=`\n${SEP}\n`;
-  navigator.clipboard.writeText(t).then(()=>showToast('\ud83d\udccb Copied!'));
+  navigator.clipboard.writeText(t).then(()=>showToast('Copied!'));
 }
 
 function downloadRpt(){
@@ -1141,10 +1234,11 @@ function downloadRpt(){
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  showToast('\u2b07\ufe0f Report downloaded!');
+  showToast('Report downloaded!');
 }
 
 async function submitRptToSlack(){
+  if(!slackEnabled){showToast("Slack is disabled — enable it in Settings first.");return;}
   const t=buildReportText();
   const now=new Date();
   const dateStr=now.toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric'});
@@ -1205,10 +1299,32 @@ async function fetchSettings(){
   return {};
 }
 
+async function toggleSlack(){
+  slackEnabled = !slackEnabled;
+  const btn = document.getElementById('slack-toggle-btn');
+  const ind = document.getElementById('slack-toggle-ind');
+  if(btn){
+    btn.setAttribute('data-on', slackEnabled ? '1' : '0');
+    if(ind) ind.style.transform = slackEnabled ? 'translateX(20px)' : 'translateX(2px)';
+  }
+  const statusEl = document.getElementById('slack-toggle-status');
+  if(statusEl) statusEl.textContent = slackEnabled ? 'Enabled' : 'Disabled (safe mode)';
+  // persist to settings.json via server
+  try{
+    const r = await fetch('/api/settings',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-Token':TOKEN},
+      body: JSON.stringify({slack_enabled: slackEnabled})
+    });
+    if(!r.ok) showToast('Failed to save Slack toggle');
+  }catch(e){ showToast('Network error saving toggle'); }
+}
+
 function renderSettings(){
   const sv=document.getElementById('sv');
   if(!sv)return;
   fetchSettings().then(settings=>{
+    slackEnabled = !!(settings.slack_enabled);
     const defaultWH=settings.slack_webhook_url||'';
     const dspWebhooks=settings.dsp_webhooks||{};
     
@@ -1223,7 +1339,7 @@ function renderSettings(){
       dspRows+=`<div class="wh-row" data-dsp="${dsp}">
         <span class="wh-dsp">${dsp}</span>
         <input type="text" class="wh-input" value="${url}" placeholder="https://hooks.slack.com/services/..." data-dsp="${dsp}"/>
-        <button class="rabtn" data-dsp="${dsp}" onclick="testDspAlert(this.dataset.dsp)" title="Send test late alert to this DSP" style="white-space:nowrap;font-size:.7rem;padding:4px 10px;">\ud83e\uddea Test Alert</button>
+        <button class="rabtn" data-dsp="${dsp}" onclick="testDspAlert(this.dataset.dsp)" title="Send test late alert to this DSP" style="white-space:nowrap;font-size:.7rem;padding:4px 10px;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 1.5h4M6.5 1.5v5.2L2.5 13a1 1 0 0 0 .9 1.5h9.2a1 1 0 0 0 .9-1.5L9.5 6.7V1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="margin-left:5px">Test Alert</span></button>
         <button class="wh-rm" data-dsp="${dsp}" onclick="removeDspWebhook(this.dataset.dsp)" title="Remove">&times;</button>
       </div>`;
     });
@@ -1232,7 +1348,17 @@ function renderSettings(){
 
 
     sv.innerHTML=`
-      <div class="rpt-title">\u2699\ufe0f Settings</div>
+      <div class="slack-toggle-wrap">
+        <div class="slack-toggle-label">
+          <div class="slack-toggle-title">Slack Notifications</div>
+          <div class="slack-toggle-sub">Enable before going live. Off by default to prevent accidental sends during testing.</div>
+        </div>
+        <button class="slack-toggle-btn" id="slack-toggle-btn" data-on="${slackEnabled?'1':'0'}" onclick="toggleSlack()" title="Toggle Slack notifications">
+          <span class="slack-toggle-ind" id="slack-toggle-ind" style="transform:${slackEnabled?'translateX(20px)':'translateX(2px)'}"></span>
+        </button>
+        <span class="slack-toggle-status" id="slack-toggle-status">${slackEnabled?'Enabled':'Disabled (safe mode)'}</span>
+      </div>
+      <div class="rpt-title"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.85.85M11.75 11.75l.85.85M3.4 12.6l.85-.85M11.75 4.25l.85-.85" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg><span style="margin-left:5px">Settings</span></div>
       <div class="rpt-sub">Manager-only configuration</div>
 
       <div class="rsec">
@@ -1249,15 +1375,15 @@ function renderSettings(){
             <div class="wh-add-row">
               <input type="text" id="add-dsp-name" class="wh-select" placeholder="DSP name..." style="min-width:80px;"/>
               <input type="text" id="add-dsp-url" class="wh-input" placeholder="Webhook URL for this DSP..."/>
-              <button class="rabtn" onclick="addDspWebhook()">\u2795 Add</button>
+              <button class="rabtn" onclick="addDspWebhook()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><line x1="8" y1="2" x2="8" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="2" y1="8" x2="14" y2="8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span style="margin-left:5px">Add</span></button>
             </div>
           </div>
 
           <div style="margin-top:18px;display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="rabtn pri" onclick="saveAllWebhooks()">\ud83d\udcbe Save All</button>
-            <button class="rabtn" onclick="testWebhook('default')">\ud83e\uddea Test Default</button>
-            <button class="rabtn" onclick="exportSettings()">\ud83d\udce4 Export Settings</button>
-            <button class="rabtn" onclick="document.getElementById('import-settings-file').click()">\ud83d\udce5 Import Settings</button>
+            <button class="rabtn pri" onclick="saveAllWebhooks()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="1.5" y="1.5" width="13" height="13" rx="2" stroke="currentColor" stroke-width="1.4"/><rect x="4.5" y="1.5" width="7" height="4" rx="0.5" stroke="currentColor" stroke-width="1.2"/><rect x="3.5" y="8.5" width="9" height="5" rx="1" stroke="currentColor" stroke-width="1.2"/></svg><span style="margin-left:5px">Save All</span></button>
+            <button class="rabtn" onclick="testWebhook('default')"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 1.5h4M6.5 1.5v5.2L2.5 13a1 1 0 0 0 .9 1.5h9.2a1 1 0 0 0 .9-1.5L9.5 6.7V1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="margin-left:5px">Test Default</span></button>
+            <button class="rabtn" onclick="exportSettings()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M8 10V2m0 0L5 5m3-3 3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M2.5 11.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span style="margin-left:5px">Export Settings</span></button>
+            <button class="rabtn" onclick="document.getElementById('import-settings-file').click()"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2.5 11.5v1a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-1M8 2v8m0 0-3-3m3 3 3-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="margin-left:5px">Import Settings</span></button>
             <input type="file" id="import-settings-file" accept=".json" style="display:none;" onchange="importSettings(event)"/>
           </div>
           <div id="webhook-status" style="margin-top:10px;font-size:.75rem;min-height:20px;"></div>
@@ -1324,7 +1450,7 @@ async function saveAllWebhooks(){
       body:JSON.stringify({slack_webhook_url:defaultUrl, dsp_webhooks:dspWebhooks})});
     if(r.ok){
       status.innerHTML='<span style="color:var(--green);">\u2705 All webhooks saved!</span>';
-      showToast('\u2699\ufe0f Settings saved');
+      showToast('<svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.85.85M11.75 11.75l.85.85M3.4 12.6l.85-.85M11.75 4.25l.85-.85" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg><span style="margin-left:5px">Settings</span> saved');
     } else {
       status.innerHTML='<span style="color:var(--red);">\u274c Failed to save</span>';
     }
@@ -1372,7 +1498,7 @@ async function exportSettings(){
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  showToast('\ud83d\udce4 Settings exported!');
+  showToast('Settings exported!');
 }
 
 function importSettings(evt){
@@ -1384,7 +1510,7 @@ function importSettings(evt){
       const settings=JSON.parse(e.target.result);
       const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Token':TOKEN},body:JSON.stringify(settings)});
       if(r.ok){
-        showToast('\ud83d\udce5 Settings imported successfully!');
+        showToast('Settings imported!');
         renderSettings();
       } else {
         showToast('\u274c Failed to import settings');
@@ -1454,7 +1580,7 @@ async function addScanlogEntry(){
   }
   inp.value='';
   if(added.length===0){showToast('\u26a0\ufe0f All entries already in ScanLog');return;}
-  showToast(`\ud83d\udccb ${added.length} tour${added.length>1?'s':''} added to ScanLog`);
+  showToast(`${added.length} tour${added.length>1?'s':''} added to ScanLog`);
   render();
   renderImport();
 }
@@ -1464,7 +1590,7 @@ async function clearSequencing(){
   try{
     const r=await fetch('/api/clear_data',{method:'POST',headers:{'X-Token':TOKEN}});
     if(r.ok){
-      showToast('\ud83d\uddd1\ufe0f Sequencing data cleared');
+      showToast('Sequencing data cleared');
       location.reload();
     } else {
       showToast('\u274c Failed to clear data');
