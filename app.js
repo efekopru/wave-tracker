@@ -1358,15 +1358,13 @@ function renderSettings(){
         </button>
         <span class="slack-toggle-status" id="slack-toggle-status">${slackEnabled?'Enabled':'Disabled (safe mode)'}</span>
       </div>
-      <div class="rpt-title"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.85.85M11.75 11.75l.85.85M3.4 12.6l.85-.85M11.75 4.25l.85-.85" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg><span style="margin-left:5px">Settings</span></div>
-      <div class="rpt-sub">Manager-only configuration</div>
+      <div class="rpt-title" style="padding:14px 16px 4px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="margin-left:5px">Settings</span></div>
 
       <div class="rsec">
         <div class="rsec-title">Slack Integration</div>
         <div style="padding:14px 16px;">
           <label class="wh-label">Default Webhook (Reports & General Alerts)</label>
           <input type="text" id="settings-webhook" value="${defaultWH}" placeholder="https://hooks.slack.com/services/T.../B.../xxx" class="wh-main-input"/>
-          <div class="wh-hint">Used for yard reports and general Slack posts. Not used as a fallback for DSP alerts.</div>
           
           <div style="margin-top:20px;">
             <label class="wh-label">DSP-Specific Webhooks (Late Tour Alerts)</label>
