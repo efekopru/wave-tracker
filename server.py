@@ -40,7 +40,21 @@ def load_settings():
                 return json.load(f)
         except Exception:
             pass
-    return {}
+    return {
+        'slack_webhook_url': 'https://hooks.slack.com/triggers/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',
+        'slack_enabled': False,
+        'dsp_webhooks': {
+            'ADGH': 'https://hooks.slack.com/triggers/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',
+            'ALGK': 'https://hooks.slack.com/triggers/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',
+            'CAEX': 'https://hooks.slack.com/triggers/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',
+            'DERD': 'https://hooks.slack.com/triggers/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',
+            'INFG': 'https://hooks.slack.com/triggers/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',
+            'KLBZ': 'https://hooks.slack.com/triggers/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',
+            'LMDD': 'https://hooks.slack.com/triggers/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',
+            'PHDI': 'https://hooks.slack.com/triggers/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',
+            'TORS': 'https://hooks.slack.com/triggers/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'
+        }
+    }
 
 def save_settings(s):
     with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
