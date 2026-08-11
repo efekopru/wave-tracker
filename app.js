@@ -1366,11 +1366,11 @@ function renderSettings(){
         <div style="padding:14px 16px;">
           <label class="wh-label">Default Webhook (Reports & General Alerts)</label>
           <input type="text" id="settings-webhook" value="${defaultWH}" placeholder="https://hooks.slack.com/services/T.../B.../xxx" class="wh-main-input"/>
-          <div class="wh-hint">Used for daily report submission and fallback for DSPs without a specific webhook.</div>
+          <div class="wh-hint">Used for yard reports and general Slack posts. Not used as a fallback for DSP alerts.</div>
           
           <div style="margin-top:20px;">
             <label class="wh-label">DSP-Specific Webhooks (Late Tour Alerts)</label>
-            <div class="wh-hint" style="margin-bottom:8px;">Late alerts route to the DSP\u2019s webhook. If none set, uses default above.</div>
+            <div class="wh-hint" style="margin-bottom:8px;">Late departure alerts are sent only to the DSP\u2019s own webhook. If no webhook is set for a DSP, no alert is sent.</div>
             <div id="dsp-webhook-list">${dspRows||'<div class="wh-empty">No DSP webhooks configured yet.</div>'}</div>
             <div class="wh-add-row">
               <input type="text" id="add-dsp-name" class="wh-select" placeholder="DSP name..." style="min-width:80px;"/>
