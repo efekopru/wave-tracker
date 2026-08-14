@@ -1,4 +1,4 @@
-﻿"""
+"""
 DNX3 Wave Tracker — Local Network Server
 =========================================
 Flask + SocketIO server for real-time multi-device sync.
@@ -545,6 +545,8 @@ def handle_settings():
         settings['slack_webhook_url'] = body['slack_webhook_url'].strip()
     if 'dsp_webhooks' in body:
         settings['dsp_webhooks'] = body['dsp_webhooks']
+    if 'slack_enabled' in body:
+        settings['slack_enabled'] = bool(body['slack_enabled'])
     save_settings(settings)
     return jsonify({'ok': True})
 
