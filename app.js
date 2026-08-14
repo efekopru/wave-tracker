@@ -1108,7 +1108,7 @@ function buildReportText(){
     : now.toLocaleDateString('en-GB',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
   const timeStr=now.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
   const SEP='\u2501'.repeat(42);
-  let t='```\n';
+  let t='';
   t+=`DNX3 \u2014 End of Day Yard Breakdown\n`;
   t+=`${dateStr} \u00b7 Generated: ${timeStr}\n`;
   t+=`${SEP}\n\n`;
