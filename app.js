@@ -752,7 +752,17 @@ function bindCards(c){
         state[String(wi)][ro]={time:t};
         showToast(`✅ ${ro} checked in at ${t}`);
         await apiCheckin(wi,ro,true,t);
-        if(inCount(wi)===WAVES[wi].total){setTimeout(()=>{playDing();showToast(`🎉 Wave ${WAVES[wi].time} — all in!`);},350);}
+        if(inCount(wi)===WAVES[wi].total){setTimeout(()=>{playDing();showToast(`\uD83C\uDF89 Wave ${WAVES[wi].time} \u2014 all in!`);},350);}
+        // If this route was previously late-alerted, send a check-in notification to the DSP
+        if(slackEnabled && slackAlerted.has(`${wi}_${ro}`)){
+          const waveTime = WAVES[wi]?.time || '';
+          const dsp = WAVES[wi] ? ([...(WAVES[wi].green||[]),...(WAVES[wi].red||[])].find(r=>r.route===ro)?.dsp||'') : '';
+          fetch('/api/slack_checkin',{
+            method:'POST',
+            headers:{'Content-Type':'application/json','X-Token':TOKEN},
+            body:JSON.stringify({route:ro,waveTime:waveTime,dsp:dsp,checkinTime:t})
+          }).catch(()=>{});
+        }
       }
       clearSearch();
     });

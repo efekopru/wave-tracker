@@ -453,6 +453,37 @@ def slack_late():
     else:
         return jsonify({'error': 'Slack webhook failed or disabled'}), 500
 
+@app.route('/api/slack_checkin', methods=['POST'])
+def slack_checkin():
+    """Send a check-in notification to DSP webhook when a previously-alerted late tour checks in."""
+    role, err = require_role('associate')
+    if err: return err
+    body = request.get_json(silent=True) or {}
+    route = body.get('route', '')
+    wave_time = body.get('waveTime', '')
+    dsp = body.get('dsp', '')
+    checkin_time = body.get('checkinTime', '')
+    if not route:
+        return jsonify({'error': 'Missing route'}), 400
+    settings = load_settings()
+    if not settings.get('slack_enabled', False):
+        return jsonify({'ok': True, 'skipped': 'slack disabled'})
+    webhook = get_slack_webhook(dsp=dsp)
+    if not webhook:
+        return jsonify({'ok': True, 'skipped': 'no webhook for dsp'})
+    msg = (
+        f"\u2705 Tour Checked In \u2014 DNX3\n\n"
+        f"Route: {route}\n"
+        f"DSP: {dsp}\n"
+        f"Wave: {wave_time}\n"
+        f"Checked in at: {checkin_time}"
+    )
+    try:
+        resp = requests.post(webhook, json={"text": msg}, timeout=10)
+        return jsonify({'ok': resp.status_code == 200})
+    except Exception:
+        return jsonify({'ok': False})
+
 @app.route('/api/slack_report', methods=['POST'])
 def slack_report():
     """Send the full report text to Slack."""
